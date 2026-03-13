@@ -1,5 +1,5 @@
-# RunPod GPU image: CUDA 12.4 + PyTorch 2.6 + Python 3.12 + Ubuntu 22.04
-FROM runpod/pytorch:2.6.0-py3.12-cuda12.4.1-devel-ubuntu22.04
+# Official PyTorch image: CUDA 12.4 + PyTorch 2.6 + Python 3.12
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
 
 # ── System packages ─────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
