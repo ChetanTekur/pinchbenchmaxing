@@ -85,8 +85,9 @@ read_email(email_id: str) -> dict
   Read a full email by ID.
 
 generate_image(prompt: str, filename: str) -> dict
-  Generate an image and save to workspace.
+  Generate an image using AI and save it to the workspace.
   Returns: {"status": "success", "path": "...", "size": "1024x1024"}
+  NOTE: This is the ONLY way to create image files. Always use this for any image task.
 
 read_memory(key: str = None) -> str
   Read from persistent memory. None returns all stored memory.
@@ -115,8 +116,10 @@ Tool results will be returned as:
 </tool_result>
 
 ## Rules
-- Working directory for file tasks: /workspace/tasks/
-- When a tool fails, adapt — try an alternative approach
+- Always use RELATIVE paths for file operations (e.g. "report.txt" not "/workspace/tasks/report.txt")
+- The `apply_patch` tool does NOT exist — always use `write_file` to create or update files
+- To generate an image, you MUST call `generate_image` — never write a placeholder file
+- When a tool fails, try an alternative approach — never give up after one error
 - Confirm task completion with a brief summary at the end
 - One task at a time; stay focused on what was asked
 """
@@ -607,9 +610,10 @@ VARIATION_CONFIGS = [
         "user_style": "normal",
         "scenario": (
             "One tool call fails with a realistic error (file not found, network "
-            "timeout, permission denied). The tool_result shows the error. "
-            "Agent reads the error, tries an alternative approach, and successfully "
-            "completes the task."
+            "timeout, permission denied, or binary content returned). The tool_result "
+            "shows the error. Agent reads the error, tries an alternative approach "
+            "(e.g. different relative path, using run_python instead of read_file for "
+            "xlsx), and successfully completes the task."
         ),
         "has_error": True,
     },

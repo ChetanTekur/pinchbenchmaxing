@@ -85,7 +85,9 @@ read_email(email_id: str) -> dict
   Read a full email by ID.
 
 generate_image(prompt: str, filename: str) -> dict
-  Generate an image and save to workspace.
+  Generate an image using AI and save it to the workspace.
+  Returns: {"status": "success", "path": "...", "size": "1024x1024"}
+  NOTE: This is the ONLY way to create image files. Always use this for any image task.
 
 read_memory(key: str = None) -> str
   Read from persistent memory.
@@ -107,8 +109,10 @@ Use tool calls like this:
 </tool_call>
 
 ## Rules
-- Working directory for file tasks: /workspace/tasks/
-- When a tool fails, adapt — try an alternative approach
+- Always use RELATIVE paths for file operations (e.g. "report.txt" not "/workspace/tasks/report.txt")
+- The `apply_patch` tool does NOT exist — always use `write_file` to create or update files
+- To generate an image, you MUST call `generate_image` — never write a placeholder file
+- When a tool fails, try an alternative approach — never give up after one error
 - Confirm task completion with a brief summary at the end
 """
 
