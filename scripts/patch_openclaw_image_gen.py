@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Patch /root/.openclaw/openclaw.json to add image generation config.
-Run this once after openclaw is installed on a new pod.
+Remove invalid 'image' key from /root/.openclaw/openclaw.json.
+OpenClaw doesn't support this key — image generation is handled automatically via OpenRouter.
 """
 import json
 from pathlib import Path
@@ -9,16 +9,21 @@ from pathlib import Path
 path = Path("/root/.openclaw/openclaw.json")
 
 if not path.exists():
-    print(f"ERROR: {path} not found. Run startup.sh first.")
+    print(f"ERROR: {path} not found.")
     exit(1)
 
 cfg = json.loads(path.read_text())
 
-cfg.setdefault("tools", {}).setdefault("image", {})["generation"] = {
-    "enabled": True,
-    "provider": "openrouter",
-    "model": "black-forest-labs/flux-schnell"
-}
+removed = False
+if "image" in cfg.get("tools", {}):
+    del cfg["tools"]["image"]
+    removed = True
 
 path.write_text(json.dumps(cfg, indent=2))
-print(f"Done. Image generation configured: black-forest-labs/flux-schnell via openrouter")
+
+if removed:
+    print("Removed invalid 'image' key from tools section.")
+else:
+    print("No 'image' key found — nothing to do.")
+
+print("openclaw.json is clean.")
