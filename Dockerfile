@@ -9,8 +9,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         vim \
         jq \
         build-essential \
-        nodejs \
-        npm \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python packages ──────────────────────────────────────────────────────────
@@ -42,8 +40,12 @@ RUN pip install --no-cache-dir \
 # Installed to /usr/local/bin — must be *started* at runtime (needs GPU)
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
-# ── OpenClaw (npm global) ─────────────────────────────────────────────────────
-RUN npm install -g openclaw
+# ── Node.js + OpenClaw ───────────────────────────────────────────────────────
+# Install Node.js 20 LTS via NodeSource, then openclaw npm package
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g openclaw
 
 # ── Working directory ─────────────────────────────────────────────────────────
 WORKDIR /workspace/synthbench
