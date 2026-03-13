@@ -59,6 +59,32 @@ else
     red "OpenClaw gateway not running — run startup.sh"
 fi
 
+# Check gateway token matches between openclaw.json and env var
+if [ -f /root/.openclaw/openclaw.json ]; then
+    CFG_TOKEN=$(python3 -c "import json; c=json.load(open('/root/.openclaw/openclaw.json')); print(c.get('gateway',{}).get('auth',{}).get('token',''))" 2>/dev/null)
+    ENV_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-}"
+
+    if [ -z "$CFG_TOKEN" ]; then
+        red "No gateway token in openclaw.json — re-run startup.sh"
+    elif [ -z "$ENV_TOKEN" ]; then
+        warn "OPENCLAW_GATEWAY_TOKEN env var not set — CLI will use token from openclaw.json (should be fine)"
+    elif [ "$CFG_TOKEN" = "$ENV_TOKEN" ]; then
+        green "Gateway token matches env var and openclaw.json"
+    else
+        red "Gateway token MISMATCH — openclaw.json and OPENCLAW_GATEWAY_TOKEN differ. Re-run startup.sh with the same token exported, or run: openclaw config set gateway.remote.token $CFG_TOKEN"
+    fi
+
+    # Also check remote.token matches auth.token inside the config itself
+    REMOTE_TOKEN=$(python3 -c "import json; c=json.load(open('/root/.openclaw/openclaw.json')); print(c.get('gateway',{}).get('remote',{}).get('token','NOT_SET'))" 2>/dev/null)
+    if [ "$REMOTE_TOKEN" = "NOT_SET" ] || [ -z "$REMOTE_TOKEN" ]; then
+        warn "gateway.remote.token not set in openclaw.json (may cause token_mismatch if openclaw CLI was run separately)"
+    elif [ "$REMOTE_TOKEN" = "$CFG_TOKEN" ]; then
+        green "gateway.remote.token matches gateway.auth.token"
+    else
+        red "gateway.remote.token does not match gateway.auth.token — run: openclaw config set gateway.remote.token $CFG_TOKEN"
+    fi
+fi
+
 # ── 4. Ollama ─────────────────────────────────────────────────────────────────
 header "Ollama"
 
