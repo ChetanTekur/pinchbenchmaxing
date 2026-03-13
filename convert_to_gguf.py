@@ -17,7 +17,7 @@ from pathlib import Path
 
 DEFAULT_MERGED = "/workspace/synthbench/qwen35-9b-clawd_merged"
 DEFAULT_OUT    = "/workspace/synthbench/qwen35-9b-clawd_gguf"
-FINAL_NAME     = "qwen35-9b"   # fix_modelfile.sh expects qwen35-9b.Q4_K_M.gguf
+FINAL_NAME     = "qwen35-9b-clawd"   # fix_modelfile.sh expects qwen35-9b-clawd.Q4_K_M.gguf
 
 
 def main():
