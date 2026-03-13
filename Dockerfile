@@ -36,16 +36,12 @@ ENV PATH="/root/.local/bin:${PATH}"
 RUN pip install --no-cache-dir \
     "unsloth[cu124-torch260] @ git+https://github.com/unslothai/unsloth.git"
 
+# ── llama.cpp (pre-install so convert_to_gguf.py doesn't wait 3 min at runtime)
+RUN python -c "from unsloth.save import install_llama_cpp_blocking; install_llama_cpp_blocking()"
+
 # ── Ollama ────────────────────────────────────────────────────────────────────
 # Installed to /usr/local/bin — must be *started* at runtime (needs GPU)
 RUN curl -fsSL https://ollama.com/install.sh | sh
-
-# ── Node.js + OpenClaw ───────────────────────────────────────────────────────
-# Install Node.js 20 LTS via NodeSource, then openclaw npm package
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/* \
-    && npm install -g openclaw
 
 # ── Working directory ─────────────────────────────────────────────────────────
 WORKDIR /workspace/synthbench
