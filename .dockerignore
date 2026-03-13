@@ -1,0 +1,21 @@
+# Never bake secrets into the image
+openclaw.json
+judge_models.json
+*.key
+anthropic_key
+openrouter_key
+*.env
+.env
+
+# Data files live on network storage, not in image
+data/
+*.jsonl
+*.b64
+
+# Misc
+__pycache__/
+*.pyc
+.DS_Store
+SESSION_REPORT.md
+runpod_setup.md
+*.md

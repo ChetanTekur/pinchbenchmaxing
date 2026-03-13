@@ -1,0 +1,23 @@
+# Secrets — never commit
+openclaw.json
+judge_models.json
+anthropic_key
+openrouter_key
+brave_key
+*.key
+*.env
+.env
+
+# Data files (large, live on network storage)
+data/
+*.jsonl
+topup.b64
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Mac
+.DS_Store
