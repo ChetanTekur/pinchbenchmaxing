@@ -57,9 +57,8 @@ def main():
         dtype=None,
     )
 
-    # KEY FIX: save_pretrained_gguf needs config.json in the directory it's
-    # given. We convert in-place inside merged_path (where config.json lives),
-    # then move the resulting GGUF file to gguf_dir.
+    # Unsloth always writes to {merged_path}_gguf/ regardless of what path we pass.
+    # Pass merged_path (where config.json lives), then find the output in merged_gguf_dir.
     print(f"Converting to GGUF ({quant.upper()}) ...")
     model.save_pretrained_gguf(
         str(merged_path),
@@ -67,12 +66,14 @@ def main():
         quantization_method=quant,
     )
 
-    # Find the GGUF that Unsloth wrote inside merged_path
-    candidates = list(merged_path.glob("*.gguf"))
+    # Unsloth saves to <merged_path>_gguf/, not gguf_dir
+    unsloth_out = merged_path.parent / (merged_path.name + "_gguf")
+    candidates = list(unsloth_out.glob("*.Q4_K_M.gguf")) or list(unsloth_out.glob("*.gguf"))
     if not candidates:
-        raise RuntimeError(f"No .gguf file found in {merged_path} after conversion.")
+        raise RuntimeError(f"No .gguf file found in {unsloth_out} after conversion.")
 
     src = candidates[0]
+    gguf_dir.mkdir(parents=True, exist_ok=True)
     print(f"Moving {src.name} → {gguf_file}")
     shutil.move(str(src), str(gguf_file))
 

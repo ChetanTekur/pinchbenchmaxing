@@ -106,7 +106,9 @@ class Config:
     @property
     def gguf_file(self) -> Path:
         quant = self._data["convert"]["quantization"].upper()
-        return self.gguf_dir / f"{self.model_name}.{quant}.gguf"
+        # Unsloth names the file after the merged directory, not the model name
+        merged_name = f"{self.model_name}_merged"
+        return self.gguf_dir / f"{merged_name}.{quant}.gguf"
 
     @property
     def train_file(self) -> Path:
