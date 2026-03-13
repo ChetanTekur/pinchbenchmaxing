@@ -4,8 +4,9 @@
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PATH="/root/.local/bin:/usr/local/bin:${PATH}"
+ENV PATH="/root/.local/bin:/root/.openclaw/bin:/usr/local/bin:${PATH}"
 ENV OLLAMA_HOST="0.0.0.0:11434"
+ENV PBM_WORKSPACE="/workspace/synthbench"
 
 # ── System packages ───────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -24,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ── Python packages (benchmark + data scripts only) ───────────────────────────
 RUN pip3 install --no-cache-dir \
+        pyyaml \
         anthropic \
         datasets \
         huggingface_hub \
@@ -32,7 +34,9 @@ RUN pip3 install --no-cache-dir \
         pdfplumber \
         PyPDF2 \
         tqdm \
-        requests
+        requests \
+        jupyter \
+        ipywidgets
 
 # ── uv ────────────────────────────────────────────────────────────────────────
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -40,26 +44,25 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 # ── Ollama ────────────────────────────────────────────────────────────────────
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
-# ── Node.js 20 + OpenClaw ─────────────────────────────────────────────────────
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+# ── Node.js 22 + OpenClaw (real installer, not npm placeholder) ───────────────
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/* \
-    && npm install -g openclaw
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://openclaw.ai/install.sh | bash
 
-# ── Copy scripts ──────────────────────────────────────────────────────────────
-COPY startup.sh              /root/startup.sh
-COPY benchmark_run.sh        /root/benchmark_run.sh
-COPY fix_modelfile.sh        /root/fix_modelfile.sh
+# ── Copy project ──────────────────────────────────────────────────────────────
+COPY config.yaml             /root/config.yaml
+COPY utils/                  /root/utils/
+COPY scripts/                /root/scripts/
 COPY generate.py             /root/generate.py
 COPY inspect_data.py         /root/inspect_data.py
 COPY llm_judge.py            /root/llm_judge.py
 COPY repair.py               /root/repair.py
 COPY topup.py                /root/topup.py
-COPY prepare_data.py         /root/prepare_data.py
 COPY openclaw_template.json  /root/openclaw_template.json
 
-RUN chmod +x /root/startup.sh /root/benchmark_run.sh /root/fix_modelfile.sh
+RUN chmod +x /root/scripts/*.sh
 
-WORKDIR /workspace/synthbench
+WORKDIR /root
 
-CMD ["/bin/bash", "-c", "bash /root/startup.sh && tail -f /dev/null"]
+CMD ["/bin/bash", "-c", "bash /root/scripts/startup.sh && tail -f /dev/null"]

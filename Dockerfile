@@ -27,7 +27,9 @@ RUN pip install --no-cache-dir \
         pandas \
         openpyxl \
         pdfplumber \
-        PyPDF2
+        PyPDF2 \
+        jupyter \
+        ipywidgets
 
 # ── uv (fast Python package manager) ─────────────────────────────────────────
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
