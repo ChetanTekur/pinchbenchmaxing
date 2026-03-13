@@ -1,0 +1,42 @@
+model:
+  # HuggingFace base model to fine-tune
+  base: Qwen/Qwen3.5-9B
+  # Short name used for output directories and Ollama model name
+  name: qwen35-9b-clawd
+
+paths:
+  # Root workspace — override with SYNTHDATA_WORKSPACE env var
+  # Defaults to ./workspace so the project runs anywhere without RunPod
+  workspace: ${SYNTHDATA_WORKSPACE:-./workspace}
+
+benchmark:
+  name: pinchbench
+  total_tasks: 23
+
+data:
+  examples_per_task: 40       # target examples per task in training set
+  val_split: 0.1              # fraction held out for validation
+  min_judge_score: 3          # filter examples below this quality score (1-5)
+
+training:
+  epochs: 3
+  batch_size: 2
+  grad_accum: 4               # effective batch = batch_size * grad_accum
+  learning_rate: 2e-4
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  max_seq_len: 4096
+  warmup_ratio: 0.05
+  lr_scheduler: cosine
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+
+convert:
+  quantization: q4_k_m        # q4_k_m (default), q8_0 (higher quality), f16 (no quant)
+
+loop:
+  max_iterations: 5
+  target_score: 0.80          # stop when benchmark score exceeds this
+  weak_task_threshold: 0.50   # tasks below this get more synthetic data each iteration
+  examples_per_weak_task: 20  # examples to generate per weak task per iteration

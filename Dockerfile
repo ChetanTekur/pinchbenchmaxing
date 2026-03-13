@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python packages ──────────────────────────────────────────────────────────
-# Install core ML / data / utility packages first (stable PyPI)
 RUN pip install --no-cache-dir \
+        pyyaml \
         anthropic \
         trl \
         transformers \
@@ -36,45 +36,26 @@ ENV PATH="/root/.local/bin:${PATH}"
 RUN pip install --no-cache-dir \
     "unsloth[cu124-torch260] @ git+https://github.com/unslothai/unsloth.git"
 
-# ── llama.cpp (pre-install so convert_to_gguf.py doesn't wait 3 min at runtime)
+# ── llama.cpp (pre-install so convert.py doesn't wait 3 min at runtime) ──────
 RUN python -c "from unsloth.save import install_llama_cpp_blocking; install_llama_cpp_blocking()"
 
 # ── Ollama ────────────────────────────────────────────────────────────────────
-# Installed to /usr/local/bin — must be *started* at runtime (needs GPU)
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
-# ── Working directory ─────────────────────────────────────────────────────────
-WORKDIR /workspace/synthbench
+# ── Copy project ──────────────────────────────────────────────────────────────
+COPY config.yaml             /root/config.yaml
+COPY utils/                  /root/utils/
+COPY stages/                 /root/stages/
+COPY scripts/                /root/scripts/
 
-# ── Copy repo scripts ─────────────────────────────────────────────────────────
-# /workspace is a RunPod network volume — do NOT copy data files there at
-# build time.  Only copy the scripts that live in the repo root.
-COPY startup.sh              /root/startup.sh
-COPY benchmark_run.sh        /root/benchmark_run.sh
-COPY fix_modelfile.sh        /root/fix_modelfile.sh
-COPY setup.sh                /root/setup.sh
-COPY generate.py             /root/generate.py
-COPY inspect_data.py         /root/inspect_data.py
-COPY llm_judge.py            /root/llm_judge.py
-COPY repair.py               /root/repair.py
-COPY topup.py                /root/topup.py
-COPY finetune.py             /root/finetune.py
-COPY prepare_data.py         /root/prepare_data.py
-COPY probe.py                /root/probe.py
-COPY convert_to_gguf.py      /root/convert_to_gguf.py
-COPY openclaw_template.json  /root/openclaw_template.json
-
-RUN chmod +x /root/startup.sh /root/benchmark_run.sh /root/fix_modelfile.sh /root/setup.sh
+RUN chmod +x /root/scripts/*.sh
 
 # ── ENV ───────────────────────────────────────────────────────────────────────
-# PATH already includes /root/.local/bin (uv) and standard npm global bin.
-# ANTHROPIC_API_KEY must be injected at runtime via RunPod env vars — never
-# hardcoded here.
 ENV PATH="/root/.local/bin:/usr/local/bin:${PATH}" \
-    OLLAMA_HOST="0.0.0.0:11434"
+    OLLAMA_HOST="0.0.0.0:11434" \
+    SYNTHDATA_WORKSPACE="/workspace/synthbench"
+
+WORKDIR /root
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
-# startup.sh handles: kill stale procs, load API key from /workspace, start
-# ollama, configure OpenClaw, health-check.  tail -f keeps the container alive
-# so RunPod keeps the pod running and you can SSH / exec in.
-CMD ["/bin/bash", "-c", "bash /root/startup.sh && tail -f /dev/null"]
+CMD ["/bin/bash", "-c", "bash /root/scripts/startup.sh && tail -f /dev/null"]
