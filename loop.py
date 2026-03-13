@@ -239,8 +239,8 @@ def cmd_run(args, cfg) -> None:
         print(f"[loop] === ITERATION {iteration}/{max_iter} ===")
         print(f"{'='*60}")
 
-        # Identify weak tasks
-        weak_tasks = [t for t in TASK_IDS if scores.get(t, 0.0) < threshold]
+        # Identify weak tasks — only among tasks that have been explicitly scored
+        weak_tasks = [t for t in TASK_IDS if t in scores and scores[t] < threshold]
         avg_score  = sum(scores.values()) / len(scores) if scores else 0.0
 
         print(f"[loop] Average score: {avg_score:.3f}  |  Target: {target}")

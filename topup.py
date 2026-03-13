@@ -331,14 +331,20 @@ def count_existing() -> dict[str, int]:
     return counts
 
 
-def compute_deficits(target: int = TARGET_PER_TASK) -> dict[str, int]:
-    """Returns {task_id: n_additional_examples_needed} for deficit tasks only."""
+def compute_deficits(target: int = TARGET_PER_TASK, only_tasks: list | None = None) -> dict[str, int]:
+    """Returns {task_id: n_additional_examples_needed} for deficit tasks only.
+    If only_tasks is provided, restrict to those task IDs regardless of existing count."""
     counts = count_existing()
     deficits = {}
-    for task_id in TASKS:
+    task_ids = only_tasks if only_tasks else list(TASKS.keys())
+    for task_id in task_ids:
+        if task_id not in TASKS:
+            continue
         current = counts.get(task_id, 0)
-        if current < target:
-            deficits[task_id] = target - current
+        # When targeting specific tasks, always add examples even if at target
+        needed = target - current if not only_tasks else max(target - current, EXAMPLES_PER_CALL)
+        if needed > 0:
+            deficits[task_id] = needed
     return deficits
 
 
@@ -444,7 +450,7 @@ def cmd_count():
     print(f"  Est. cost:           ~${batches * EXAMPLES_PER_CALL * 0.015:.2f}")
 
 
-def cmd_submit():
+def cmd_submit(only_tasks: list | None = None):
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         print("ERROR: ANTHROPIC_API_KEY not set")
@@ -452,7 +458,7 @@ def cmd_submit():
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
 
-    deficits = compute_deficits()
+    deficits = compute_deficits(only_tasks=only_tasks)
     if not deficits:
         print("All tasks are at or above target. Nothing to do.")
         sys.exit(0)
@@ -632,8 +638,8 @@ def cmd_collect():
     print(f"\nRun: python topup.py count  to verify gaps are closed")
 
 
-def cmd_run():
-    cmd_submit()
+def cmd_run(only_tasks: list | None = None):
+    cmd_submit(only_tasks=only_tasks)
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     client  = anthropic.Anthropic(api_key=api_key)
     batch_id = BATCH_FILE.read_text().strip()
@@ -659,7 +665,18 @@ if __name__ == "__main__":
         choices=["count", "submit", "status", "collect", "run"],
         help="count: show gaps | submit: send batch | status: check | collect: append | run: all",
     )
+    parser.add_argument(
+        "--tasks",
+        type=str,
+        default=None,
+        help="Comma-separated task IDs to target (e.g. task_09_files,task_13_image_gen). "
+             "Overrides deficit calculation — always generates examples for these tasks.",
+    )
     args = parser.parse_args()
 
-    {"count": cmd_count, "submit": cmd_submit, "status": cmd_status,
-     "collect": cmd_collect, "run": cmd_run}[args.command]()
+    only_tasks = [t.strip() for t in args.tasks.split(",")] if args.tasks else None
+
+    if args.command in ("submit", "run"):
+        {"submit": cmd_submit, "run": cmd_run}[args.command](only_tasks=only_tasks)
+    else:
+        {"count": cmd_count, "status": cmd_status, "collect": cmd_collect}[args.command]()
