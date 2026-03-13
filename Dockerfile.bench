@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq \
         openssl \
         ca-certificates \
+        zstd \
     && ln -sf python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
