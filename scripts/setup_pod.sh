@@ -38,7 +38,8 @@ export PATH="$HOME/.local/bin:$HOME/.openclaw/bin:/usr/local/bin:$PATH"
 openclaw --version || echo "WARNING: openclaw not in PATH — check ~/.openclaw/bin or ~/.local/bin"
 
 echo "=== [5/5] Patching PinchBench lib_agent.py ==="
-LIB_AGENT="/workspace/synthbench/skill/scripts/lib_agent.py"
+WORKSPACE="${SYNTHDATA_WORKSPACE:-./workspace}"
+LIB_AGENT="$WORKSPACE/skill/scripts/lib_agent.py"
 if [ -f "$LIB_AGENT" ]; then
     if ! grep -q '"ollama/"' "$LIB_AGENT"; then
         echo "  Adding 'ollama/' to KNOWN_PROVIDERS..."
@@ -65,4 +66,4 @@ echo "Next: set env vars and run startup.sh"
 echo "  export OPENROUTER_API_KEY=..."
 echo "  export BRAVE_API_KEY=..."
 echo "  export OPENCLAW_GATEWAY_TOKEN=\$(openssl rand -hex 24)"
-echo "  bash /root/scripts/startup.sh"
+echo "  bash scripts/startup.sh"

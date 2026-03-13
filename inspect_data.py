@@ -13,9 +13,11 @@ Usage:
 import json, random, re, argparse, sys
 from pathlib import Path
 from collections import defaultdict
+from utils.config import load_config
 
-TRAIN_FILE = Path("/workspace/data/train.jsonl")
-VAL_FILE   = Path("/workspace/data/val.jsonl")
+_cfg       = load_config()
+TRAIN_FILE = _cfg.train_file
+VAL_FILE   = _cfg.val_file
 
 VALID_TOOLS = {
     "read_file", "write_file", "create_directory", "list_files",

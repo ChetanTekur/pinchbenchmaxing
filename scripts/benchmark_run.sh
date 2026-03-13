@@ -22,7 +22,8 @@ set -euo pipefail
 
 export PATH="$HOME/.local/bin:$PATH"
 
-BENCH_DIR="/workspace/synthbench/skill"
+WORKSPACE="${SYNTHDATA_WORKSPACE:-./workspace}"
+BENCH_DIR="$WORKSPACE/skill"
 SCRIPTS_DIR="$BENCH_DIR/scripts"
 
 # ── Argument validation ───────────────────────────────────────────────────────
@@ -68,7 +69,7 @@ fi
 # Benchmark scripts directory
 if [ ! -d "$SCRIPTS_DIR" ]; then
     echo "ERROR: Benchmark scripts not found at $SCRIPTS_DIR"
-    echo "  Make sure /workspace/synthbench is set up on this pod."
+    echo "  Set SYNTHDATA_WORKSPACE to your workspace directory."
     exit 1
 fi
 echo "  [OK] Benchmark scripts found at $SCRIPTS_DIR"

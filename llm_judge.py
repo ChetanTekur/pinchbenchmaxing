@@ -17,10 +17,12 @@ from pathlib import Path
 from collections import defaultdict
 from tqdm import tqdm
 import anthropic
+from utils.config import load_config
 
-TRAIN_FILE  = Path("/workspace/synthbench/data/train.jsonl")
-VAL_FILE    = Path("/workspace/synthbench/data/val.jsonl")
-SCORES_FILE = Path("/workspace/synthbench/data/scores.json")
+_cfg        = load_config()
+TRAIN_FILE  = _cfg.train_file
+VAL_FILE    = _cfg.val_file
+SCORES_FILE = _cfg.data_dir / "scores.json"
 
 JUDGE_MODEL = "claude-sonnet-4-5"
 MIN_SCORE   = 3   # default threshold (out of 5)

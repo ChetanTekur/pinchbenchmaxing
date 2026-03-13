@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Remove invalid 'image' key from /root/.openclaw/openclaw.json.
+Remove invalid 'image' key from ~/.openclaw/openclaw.json.
 OpenClaw doesn't support this key — image generation is handled automatically via OpenRouter.
 """
 import json
 from pathlib import Path
 
-path = Path("/root/.openclaw/openclaw.json")
+path = Path.home() / ".openclaw" / "openclaw.json"
 
 if not path.exists():
     print(f"ERROR: {path} not found.")

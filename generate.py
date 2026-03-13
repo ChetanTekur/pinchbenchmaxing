@@ -14,15 +14,17 @@ import os, sys, json, time, random, argparse
 from pathlib import Path
 from tqdm import tqdm
 import anthropic
+from utils.config import load_config
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
-DATA_DIR   = Path("/workspace/data")
+_cfg       = load_config()
+DATA_DIR   = _cfg.data_dir
 RAW_DIR    = DATA_DIR / "raw"
 BATCH_FILE = DATA_DIR / "batch_id.txt"
-TRAIN_FILE = DATA_DIR / "train.jsonl"
-VAL_FILE   = DATA_DIR / "val.jsonl"
+TRAIN_FILE = _cfg.train_file
+VAL_FILE   = _cfg.val_file
 
 MODEL              = "claude-sonnet-4-5"
 EXAMPLES_PER_CALL  = 5    # Claude generates N examples per batch request

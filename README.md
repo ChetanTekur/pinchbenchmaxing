@@ -80,22 +80,22 @@ paths:
 |------|---------|
 | `/tmp/openclaw-gateway.log` | OpenClaw gateway logs |
 | `/tmp/ollama.log` | Ollama logs |
-| `/root/.openclaw/openclaw.json` | Generated OpenClaw config (from template + env vars) |
-| `/workspace/synthbench/skill/` | PinchBench benchmark scripts |
-| `/workspace/synthbench/data/` | Training data |
-| `/workspace/synthbench/qwen35-9b-clawd_merged_gguf/` | Fine-tuned GGUF |
+| `~/.openclaw/openclaw.json` | Generated OpenClaw config (from template + env vars) |
+| `$SYNTHDATA_WORKSPACE/skill/` | PinchBench benchmark scripts |
+| `$SYNTHDATA_WORKSPACE/data/` | Training data |
+| `$SYNTHDATA_WORKSPACE/models/` | Fine-tuned model weights and GGUF |
 
 ---
 
-## RunPod Setup (New Pod)
+## Setup
 
 ### Step 1 — One-time setup
 
-In Jupyter:
-```python
-import urllib.request, subprocess
-urllib.request.urlretrieve("https://raw.githubusercontent.com/ChetanTekur/pinchbenchmaxing/main/scripts/setup_pod.sh", "/root/setup_pod.sh")
-subprocess.run(["bash", "/root/setup_pod.sh"])
+Clone the repo and run setup:
+```bash
+git clone https://github.com/ChetanTekur/pinchbenchmaxing
+cd pinchbenchmaxing
+bash scripts/setup_pod.sh
 ```
 
 Installs: Node 22, OpenClaw, jq, pandas, pdfplumber, openpyxl. Also patches `lib_agent.py` to add `ollama/` to `KNOWN_PROVIDERS`.
@@ -107,7 +107,8 @@ Set env vars, then run startup:
 export OPENROUTER_API_KEY="sk-or-..."
 export BRAVE_API_KEY="BSA..."
 export OPENCLAW_GATEWAY_TOKEN=$(openssl rand -hex 24)
-bash /root/scripts/startup.sh
+export SYNTHDATA_WORKSPACE=/path/to/your/workspace   # default: ./workspace
+bash scripts/startup.sh
 ```
 
 `startup.sh` handles: kill stale processes, generate `openclaw.json` from template, start Ollama, start OpenClaw gateway, health check.
@@ -115,16 +116,13 @@ bash /root/scripts/startup.sh
 ### Step 2b — Register with PinchBench (one-time only)
 
 ```bash
-cd /workspace/synthbench/skill && bash scripts/run.sh --register
+cd $SYNTHDATA_WORKSPACE/skill && bash scripts/run.sh --register
 ```
 
 ### Step 3 — Check everything is ready
 
-In Jupyter:
-```python
-import urllib.request, subprocess
-urllib.request.urlretrieve("https://raw.githubusercontent.com/ChetanTekur/pinchbenchmaxing/main/scripts/check_setup.sh", "/root/check_setup.sh")
-subprocess.run(["bash", "/root/check_setup.sh"])
+```bash
+bash scripts/check_setup.sh
 ```
 
 Fix anything flagged before running the benchmark.
@@ -132,7 +130,7 @@ Fix anything flagged before running the benchmark.
 ### Step 4 — Run benchmark
 
 ```bash
-bash /root/scripts/benchmark_run.sh ollama/qwen35-9b-gguf-claw
+bash scripts/benchmark_run.sh ollama/qwen35-9b-gguf-claw
 ```
 
 ---
@@ -141,18 +139,21 @@ bash /root/scripts/benchmark_run.sh ollama/qwen35-9b-gguf-claw
 
 ### 1. Generate synthetic data
 ```bash
-python generate.py
+python generate.py submit   # submit batch to Claude API
+python generate.py status   # check progress
+python generate.py collect  # save results to train/val JSONL
 ```
 Uses Claude Batch API to generate ~40 agent traces per PinchBench task.
 
 ### 2. Score and filter
 ```bash
-python llm_judge.py --min 3
+python llm_judge.py run
+python llm_judge.py filter --min 3
 ```
 
 ### 3. Top up weak tasks
 ```bash
-python topup.py
+python topup.py run
 ```
 
 ### 4. Prepare for SFT

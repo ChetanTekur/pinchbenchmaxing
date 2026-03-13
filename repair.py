@@ -10,11 +10,13 @@ Usage:
 
 import json, re, random, argparse
 from pathlib import Path
+from utils.config import load_config
 
-DATA_DIR   = Path("/workspace/data")
+_cfg       = load_config()
+DATA_DIR   = _cfg.data_dir
 RAW_DIR    = DATA_DIR / "raw"
-TRAIN_FILE = DATA_DIR / "train.jsonl"
-VAL_FILE   = DATA_DIR / "val.jsonl"
+TRAIN_FILE = _cfg.train_file
+VAL_FILE   = _cfg.val_file
 VAL_PER_TASK = 2
 
 # Paste OPENCLAW_SYSTEM here (same as generate.py) so we can rebuild messages

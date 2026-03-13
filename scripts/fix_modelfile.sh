@@ -12,12 +12,23 @@
 #   pointing FROM at the fine-tuned GGUF file. Re-creating the model with this fixed
 #   Modelfile restores full tool-calling capability for the fine-tuned weights.
 
-GGUF_PATH="/workspace/synthbench/qwen35-9b-clawd_merged_gguf/qwen35-9b-clawd_merged.Q4_K_M.gguf"
-MODEL_NAME="qwen35-9b-gguf-claw"
+WORKSPACE="${SYNTHDATA_WORKSPACE:-./workspace}"
+MODEL_NAME="${FINETUNE_MODEL_NAME:-qwen35-9b-gguf-claw}"
+GGUF_PATH="${GGUF_PATH:-$WORKSPACE/models/qwen35-9b-clawd_merged_gguf/qwen35-9b-clawd_merged.Q4_K_M.gguf}"
 MODELFILE="/tmp/Modelfile-clawd"
 
-cat > "$MODELFILE" << 'EOF'
-FROM /workspace/synthbench/qwen35-9b-clawd_merged_gguf/qwen35-9b-clawd_merged.Q4_K_M.gguf
+if [ ! -f "$GGUF_PATH" ]; then
+    echo "ERROR: GGUF not found at $GGUF_PATH"
+    echo "  Set GGUF_PATH env var or SYNTHDATA_WORKSPACE to point to your workspace."
+    exit 1
+fi
+
+echo "GGUF:  $GGUF_PATH"
+echo "Model: $MODEL_NAME"
+
+# Write FROM line first (needs variable expansion), then append rest as literal
+echo "FROM $GGUF_PATH" > "$MODELFILE"
+cat >> "$MODELFILE" << 'EOF'
 TEMPLATE """
 {{- $lastUserIdx := -1 -}}
 {{- range $idx, $msg := .Messages -}}

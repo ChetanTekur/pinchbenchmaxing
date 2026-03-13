@@ -40,10 +40,10 @@ else
     red "openclaw not installed — run: curl -fsSL https://openclaw.ai/install.sh | bash"
 fi
 
-if [ -f /root/.openclaw/openclaw.json ]; then
+OPENCLAW_CFG="$HOME/.openclaw/openclaw.json"
+if [ -f "$OPENCLAW_CFG" ]; then
     green "openclaw.json exists"
-    # Validate no bad keys
-    if python3 -c "import json; json.load(open('/root/.openclaw/openclaw.json'))" &>/dev/null; then
+    if python3 -c "import json; json.load(open('$OPENCLAW_CFG'))" &>/dev/null; then
         green "openclaw.json is valid JSON"
     else
         red "openclaw.json is invalid JSON"
@@ -60,8 +60,8 @@ else
 fi
 
 # Check gateway token matches between openclaw.json and env var
-if [ -f /root/.openclaw/openclaw.json ]; then
-    CFG_TOKEN=$(python3 -c "import json; c=json.load(open('/root/.openclaw/openclaw.json')); print(c.get('gateway',{}).get('auth',{}).get('token',''))" 2>/dev/null)
+if [ -f "$OPENCLAW_CFG" ]; then
+    CFG_TOKEN=$(python3 -c "import json; c=json.load(open('$OPENCLAW_CFG')); print(c.get('gateway',{}).get('auth',{}).get('token',''))" 2>/dev/null)
     ENV_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-}"
 
     if [ -z "$CFG_TOKEN" ]; then
@@ -71,11 +71,10 @@ if [ -f /root/.openclaw/openclaw.json ]; then
     elif [ "$CFG_TOKEN" = "$ENV_TOKEN" ]; then
         green "Gateway token matches env var and openclaw.json"
     else
-        red "Gateway token MISMATCH — openclaw.json and OPENCLAW_GATEWAY_TOKEN differ. Re-run startup.sh with the same token exported, or run: openclaw config set gateway.remote.token $CFG_TOKEN"
+        red "Gateway token MISMATCH — re-run startup.sh with the same OPENCLAW_GATEWAY_TOKEN, or run: openclaw config set gateway.remote.token $CFG_TOKEN"
     fi
 
-    # Also check remote.token matches auth.token inside the config itself
-    REMOTE_TOKEN=$(python3 -c "import json; c=json.load(open('/root/.openclaw/openclaw.json')); print(c.get('gateway',{}).get('remote',{}).get('token','NOT_SET'))" 2>/dev/null)
+    REMOTE_TOKEN=$(python3 -c "import json; c=json.load(open('$OPENCLAW_CFG')); print(c.get('gateway',{}).get('remote',{}).get('token','NOT_SET'))" 2>/dev/null)
     if [ "$REMOTE_TOKEN" = "NOT_SET" ] || [ -z "$REMOTE_TOKEN" ]; then
         warn "gateway.remote.token not set in openclaw.json (may cause token_mismatch if openclaw CLI was run separately)"
     elif [ "$REMOTE_TOKEN" = "$CFG_TOKEN" ]; then
@@ -131,7 +130,8 @@ fi
 # ── 6. PinchBench ─────────────────────────────────────────────────────────────
 header "PinchBench"
 
-BENCH_DIR="/workspace/synthbench/skill"
+WORKSPACE="${SYNTHDATA_WORKSPACE:-./workspace}"
+BENCH_DIR="$WORKSPACE/skill"
 if [ -d "$BENCH_DIR" ]; then
     green "PinchBench skill dir exists ($BENCH_DIR)"
 else
