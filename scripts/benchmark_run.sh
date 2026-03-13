@@ -94,7 +94,7 @@ echo ""
 
 # ── Run benchmark ─────────────────────────────────────────────────────────────
 cd "$BENCH_DIR"
-./scripts/run.sh --model "$MODEL" --no-upload 2>&1 | tee "$LOG_FILE"
+./scripts/run.sh --model "$MODEL" 2>&1 | tee "$LOG_FILE"
 EXIT_CODE=${PIPESTATUS[0]}
 
 echo ""
@@ -115,4 +115,3 @@ grep -E "(Score|score|SCORE|%|passed|failed|task_)" "$LOG_FILE" | tail -30 || tr
 
 echo ""
 echo "  To view full log:  cat $LOG_FILE"
-echo "  To upload results: cd $BENCH_DIR && ./scripts/run.sh --model $MODEL (without --no-upload)"
