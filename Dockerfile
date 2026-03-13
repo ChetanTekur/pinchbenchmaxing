@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         vim \
         jq \
         build-essential \
+        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python packages ──────────────────────────────────────────────────────────
@@ -42,6 +43,12 @@ RUN python -c "from unsloth.save import install_llama_cpp_blocking; install_llam
 # ── Ollama ────────────────────────────────────────────────────────────────────
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
+# ── Node.js 22 + OpenClaw (real installer, not npm placeholder) ───────────────
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://openclaw.ai/install.sh | bash
+
 # ── Copy project ──────────────────────────────────────────────────────────────
 COPY config.yaml             /root/config.yaml
 COPY utils/                  /root/utils/
@@ -51,7 +58,7 @@ COPY scripts/                /root/scripts/
 RUN chmod +x /root/scripts/*.sh
 
 # ── ENV ───────────────────────────────────────────────────────────────────────
-ENV PATH="/root/.local/bin:/usr/local/bin:${PATH}" \
+ENV PATH="/root/.local/bin:/root/.openclaw/bin:/usr/local/bin:${PATH}" \
     OLLAMA_HOST="0.0.0.0:11434" \
     SYNTHDATA_WORKSPACE="/workspace/synthbench"
 
