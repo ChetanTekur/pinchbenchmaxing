@@ -64,6 +64,7 @@ COPY repair.py               /root/repair.py
 COPY topup.py                /root/topup.py
 COPY finetune.py             /root/finetune.py
 COPY prepare_data.py         /root/prepare_data.py
+COPY probe.py                /root/probe.py
 COPY openclaw_template.json  /root/openclaw_template.json
 
 RUN chmod +x /root/startup.sh /root/benchmark_run.sh /root/fix_modelfile.sh /root/setup.sh
