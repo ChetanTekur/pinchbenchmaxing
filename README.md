@@ -112,6 +112,12 @@ bash /root/scripts/startup.sh
 
 `startup.sh` handles: kill stale processes, generate `openclaw.json` from template, start Ollama, start OpenClaw gateway, health check.
 
+### Step 2b — Register with PinchBench (one-time only)
+
+```bash
+cd /workspace/synthbench/skill && bash scripts/run.sh --register
+```
+
 ### Step 3 — Check everything is ready
 
 In Jupyter:
