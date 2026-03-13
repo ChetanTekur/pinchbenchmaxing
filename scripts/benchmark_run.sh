@@ -2,11 +2,11 @@
 # Run a PinchBench benchmark against a given model via OpenClaw / Ollama.
 #
 # Usage:
-#   bash benchmark_run.sh <model>
+#   bash benchmark_run.sh <model> [--no-upload]
 #
 # Examples:
-#   bash benchmark_run.sh ollama/qwen3:8b
-#   bash benchmark_run.sh ollama/qwen3-8b-gguf-claw
+#   bash benchmark_run.sh ollama/qwen35-9b-gguf-claw           # run + upload to leaderboard
+#   bash benchmark_run.sh ollama/qwen35-9b-gguf-claw --no-upload  # dry run, no upload
 #
 # The script:
 #   1. Validates that Ollama and the OpenClaw gateway are running.
@@ -36,6 +36,8 @@ if [ $# -lt 1 ]; then
 fi
 
 MODEL="$1"
+NO_UPLOAD=""
+[ "${2:-}" = "--no-upload" ] && NO_UPLOAD="--no-upload"
 
 # Derive a filesystem-safe name for log files (replace / : with _)
 SAFE_NAME=$(echo "$MODEL" | tr '/: ' '___')
@@ -94,7 +96,7 @@ echo ""
 
 # ── Run benchmark ─────────────────────────────────────────────────────────────
 cd "$BENCH_DIR"
-./scripts/run.sh --model "$MODEL" 2>&1 | tee "$LOG_FILE"
+./scripts/run.sh --model "$MODEL" $NO_UPLOAD 2>&1 | tee "$LOG_FILE"
 EXIT_CODE=${PIPESTATUS[0]}
 
 echo ""
