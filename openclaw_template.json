@@ -70,6 +70,13 @@
         "provider": "brave",
         "apiKey": "__BRAVE_API_KEY__"
       }
+    },
+    "image": {
+      "generation": {
+        "enabled": true,
+        "provider": "openrouter",
+        "model": "black-forest-labs/flux-schnell"
+      }
     }
   },
   "messages": {
