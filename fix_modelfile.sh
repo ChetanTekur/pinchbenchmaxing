@@ -12,12 +12,12 @@
 #   pointing FROM at the fine-tuned GGUF file. Re-creating the model with this fixed
 #   Modelfile restores full tool-calling capability for the fine-tuned weights.
 
-GGUF_PATH="/workspace/synthbench/qwen3-8b-clawd_gguf_gguf/qwen3-8b.Q4_K_M.gguf"
-MODEL_NAME="qwen3-8b-gguf-claw"
+GGUF_PATH="/workspace/synthbench/qwen35-9b-clawd_gguf/qwen35-9b.Q4_K_M.gguf"
+MODEL_NAME="qwen35-9b-gguf-claw"
 MODELFILE="/tmp/Modelfile-clawd"
 
 cat > "$MODELFILE" << 'EOF'
-FROM /workspace/synthbench/qwen3-8b-clawd_gguf_gguf/qwen3-8b.Q4_K_M.gguf
+FROM /workspace/synthbench/qwen35-9b-clawd_gguf/qwen35-9b.Q4_K_M.gguf
 TEMPLATE """
 {{- $lastUserIdx := -1 -}}
 {{- range $idx, $msg := .Messages -}}

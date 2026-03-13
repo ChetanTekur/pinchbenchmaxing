@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Fine-tune Qwen3-8B on PinchBench synthetic agent traces.
+Fine-tune Qwen3.5-9B on PinchBench synthetic agent traces.
 
 Uses Unsloth for fast LoRA training + TRL SFTTrainer.
 Trains only on assistant turns (tool calls + responses).
+Thinking mode is disabled (no <think> tokens) — agent tasks don't need CoT overhead.
 
 Usage:
   python finetune.py              # full training run
@@ -13,7 +14,7 @@ Requirements:
   pip install "unsloth[cu124-torch260] @ git+https://github.com/unslothai/unsloth.git"
   pip install trl transformers peft datasets accelerate
 
-Model output: /workspace/synthbench/qwen3-8b-clawd/
+Model output: /workspace/synthbench/qwen35-9b-clawd/
 """
 
 import os, json, argparse
@@ -23,8 +24,8 @@ from datasets import Dataset
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
-MODEL_NAME   = "Qwen/Qwen3-8B"
-OUTPUT_DIR   = "/workspace/synthbench/qwen3-8b-clawd"
+MODEL_NAME   = "Qwen/Qwen3.5-9B"
+OUTPUT_DIR   = "/workspace/synthbench/qwen35-9b-clawd"
 DATA_DIR     = Path("/workspace/synthbench/data")
 TRAIN_FILE   = DATA_DIR / "train_sft.jsonl"
 VAL_FILE     = DATA_DIR / "val_sft.jsonl"
@@ -113,14 +114,25 @@ def main(dry_run: bool = False):
         return
 
     # ── 4. Apply chat template ─────────────────────────────────────────────────
-    # Format messages using Qwen3's chat template
+    # Disable thinking mode — agent traces have no <think> blocks and we don't
+    # want the model wasting tokens on CoT during benchmark inference.
     def format_example(example):
         messages = example["messages"]
-        text = tokenizer.apply_chat_template(
-            messages,
-            tokenize        = False,
-            add_generation_prompt = False,
-        )
+        # enable_thinking=False suppresses <think>...</think> generation
+        try:
+            text = tokenizer.apply_chat_template(
+                messages,
+                tokenize             = False,
+                add_generation_prompt= False,
+                enable_thinking      = False,
+            )
+        except TypeError:
+            # Fallback if this tokenizer doesn't support enable_thinking yet
+            text = tokenizer.apply_chat_template(
+                messages,
+                tokenize             = False,
+                add_generation_prompt= False,
+            )
         return {"text": text}
 
     train_dataset = train_dataset.map(format_example, remove_columns=["messages"])
