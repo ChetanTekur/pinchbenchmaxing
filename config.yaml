@@ -5,9 +5,9 @@ model:
   name: qwen35-9b-clawd
 
 paths:
-  # Root workspace — override with SYNTHDATA_WORKSPACE env var
+  # Root workspace — override with PBM_WORKSPACE env var
   # Defaults to ./workspace so the project runs anywhere without RunPod
-  workspace: ${SYNTHDATA_WORKSPACE:-./workspace}
+  workspace: ${PBM_WORKSPACE:-./workspace}
 
 benchmark:
   name: pinchbench

@@ -60,7 +60,7 @@ RUN chmod +x /root/scripts/*.sh
 # ── ENV ───────────────────────────────────────────────────────────────────────
 ENV PATH="/root/.local/bin:/root/.openclaw/bin:/usr/local/bin:${PATH}" \
     OLLAMA_HOST="0.0.0.0:11434" \
-    SYNTHDATA_WORKSPACE="/workspace/synthbench"
+    PBM_WORKSPACE="/workspace/synthbench"
 
 WORKDIR /root
 

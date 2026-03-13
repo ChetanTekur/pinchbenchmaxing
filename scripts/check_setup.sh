@@ -130,7 +130,7 @@ fi
 # ── 6. PinchBench ─────────────────────────────────────────────────────────────
 header "PinchBench"
 
-WORKSPACE="${SYNTHDATA_WORKSPACE:-./workspace}"
+WORKSPACE="${PBM_WORKSPACE:-./workspace}"
 BENCH_DIR="$WORKSPACE/skill"
 if [ -d "$BENCH_DIR" ]; then
     green "PinchBench skill dir exists ($BENCH_DIR)"

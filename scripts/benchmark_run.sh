@@ -22,7 +22,7 @@ set -euo pipefail
 
 export PATH="$HOME/.local/bin:$PATH"
 
-WORKSPACE="${SYNTHDATA_WORKSPACE:-./workspace}"
+WORKSPACE="${PBM_WORKSPACE:-./workspace}"
 BENCH_DIR="$WORKSPACE/skill"
 SCRIPTS_DIR="$BENCH_DIR/scripts"
 
@@ -69,7 +69,7 @@ fi
 # Benchmark scripts directory
 if [ ! -d "$SCRIPTS_DIR" ]; then
     echo "ERROR: Benchmark scripts not found at $SCRIPTS_DIR"
-    echo "  Set SYNTHDATA_WORKSPACE to your workspace directory."
+    echo "  Set PBM_WORKSPACE to your workspace directory."
     exit 1
 fi
 echo "  [OK] Benchmark scripts found at $SCRIPTS_DIR"

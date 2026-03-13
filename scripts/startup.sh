@@ -12,7 +12,7 @@
 #
 # Optional:
 #   ANTHROPIC_API_KEY    - Anthropic key (for data generation scripts only)
-#   SYNTHDATA_WORKSPACE  - Root workspace dir (default: ./workspace)
+#   PBM_WORKSPACE  - Root workspace dir (default: ./workspace)
 #
 # Usage: bash scripts/startup.sh
 
@@ -20,7 +20,7 @@ set -euo pipefail
 
 export PATH="$HOME/.local/bin:$HOME/.openclaw/bin:/usr/local/bin:$PATH"
 
-WORKSPACE="${SYNTHDATA_WORKSPACE:-./workspace}"
+WORKSPACE="${PBM_WORKSPACE:-./workspace}"
 
 # ── 1. Kill stale processes ───────────────────────────────────────────────────
 echo "=== [1/5] Killing stale openclaw / ollama processes ==="

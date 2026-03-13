@@ -47,7 +47,7 @@ Dockerfile.bench         # lightweight image: Ollama only (no PyTorch)
 All paths, model names, and hyperparameters live in `config.yaml`. Override the workspace with:
 
 ```bash
-export SYNTHDATA_WORKSPACE=/your/path   # default: ./workspace
+export PBM_WORKSPACE=/your/path   # default: ./workspace
 ```
 
 Key settings:
@@ -58,7 +58,7 @@ model:
   name: qwen35-9b-clawd       # used for output dirs and Ollama model name
 
 paths:
-  workspace: ${SYNTHDATA_WORKSPACE:-./workspace}
+  workspace: ${PBM_WORKSPACE:-./workspace}
 ```
 
 ---
@@ -81,9 +81,9 @@ paths:
 | `/tmp/openclaw-gateway.log` | OpenClaw gateway logs |
 | `/tmp/ollama.log` | Ollama logs |
 | `~/.openclaw/openclaw.json` | Generated OpenClaw config (from template + env vars) |
-| `$SYNTHDATA_WORKSPACE/skill/` | PinchBench benchmark scripts |
-| `$SYNTHDATA_WORKSPACE/data/` | Training data |
-| `$SYNTHDATA_WORKSPACE/models/` | Fine-tuned model weights and GGUF |
+| `$PBM_WORKSPACE/skill/` | PinchBench benchmark scripts |
+| `$PBM_WORKSPACE/data/` | Training data |
+| `$PBM_WORKSPACE/models/` | Fine-tuned model weights and GGUF |
 
 ---
 
@@ -107,7 +107,7 @@ Set env vars, then run startup:
 export OPENROUTER_API_KEY="sk-or-..."
 export BRAVE_API_KEY="BSA..."
 export OPENCLAW_GATEWAY_TOKEN=$(openssl rand -hex 24)
-export SYNTHDATA_WORKSPACE=/path/to/your/workspace   # default: ./workspace
+export PBM_WORKSPACE=/path/to/your/workspace   # default: ./workspace
 bash scripts/startup.sh
 ```
 
@@ -116,7 +116,7 @@ bash scripts/startup.sh
 ### Step 2b — Register with PinchBench (one-time only)
 
 ```bash
-cd $SYNTHDATA_WORKSPACE/skill && bash scripts/run.sh --register
+cd $PBM_WORKSPACE/skill && bash scripts/run.sh --register
 ```
 
 ### Step 3 — Check everything is ready
