@@ -379,12 +379,13 @@ def cmd_filter(min_score: int):
         else:
             removed += 1
 
-    # Re-split train/val
-    VAL_PER_TASK = 2
+    # Re-split train/val using val_split from config (default 0.1)
+    val_fraction = _cfg["data"]["val_split"]
     train_out, val_out = [], []
     for task_id, exs in by_task_kept.items():
         random.shuffle(exs)
-        val_cut = min(VAL_PER_TASK, len(exs))
+        val_cut = max(2, round(len(exs) * val_fraction))
+        val_cut = min(val_cut, len(exs))
         val_out.extend(exs[:val_cut])
         train_out.extend(exs[val_cut:])
 

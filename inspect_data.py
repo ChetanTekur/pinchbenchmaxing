@@ -312,11 +312,12 @@ def cmd_validate(clean: bool = False):
         for r in clean_records:
             by_task[r["task_id"]].append(r)
 
+        val_fraction = _cfg["data"]["val_split"]  # from config.yaml, default 0.1
         train_out, val_out = [], []
-        VAL_PER_TASK = 2
         for task_id, exs in by_task.items():
             random.shuffle(exs)
-            val_cut = min(VAL_PER_TASK, len(exs))
+            val_cut = max(2, round(len(exs) * val_fraction))
+            val_cut = min(val_cut, len(exs))
             val_out.extend(exs[:val_cut])
             train_out.extend(exs[val_cut:])
 
