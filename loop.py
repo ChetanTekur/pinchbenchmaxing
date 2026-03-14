@@ -135,17 +135,28 @@ def run_cmd(cmd: list[str], env: dict | None = None, check: bool = True) -> int:
 
 
 def topup_weak_tasks(weak_tasks: list[str], cfg) -> None:
-    """Run topup.py submit/collect for each weak task."""
+    """Run topup.py submit/collect for each weak task.
+
+    Raises SystemExit(2) if topup produces 0 new examples (propagated from topup.py).
+    """
     # Split into hard vs normal to set EXAMPLES_PER_CALL correctly
     normal_tasks = [t for t in weak_tasks if t not in HARD_TASKS]
     hard_tasks   = [t for t in weak_tasks if t in HARD_TASKS]
 
+    total_new = 0
     for task_group, epc in [(normal_tasks, "3"), (hard_tasks, "1")]:
         if not task_group:
             continue
         task_str = ",".join(task_group)
         env = {"TOPUP_TASKS": task_str, "EXAMPLES_PER_CALL": epc}
-        run_cmd([sys.executable, "topup.py", "run", "--tasks", task_str], env=env)
+        # check=False so we can distinguish exit code 2 (no new data) from other errors
+        rc = run_cmd([sys.executable, "topup.py", "run", "--tasks", task_str], env=env, check=False)
+        if rc == 2:
+            print("[loop] ERROR: topup produced 0 new examples. "
+                  "Fix parse failures before continuing.", file=sys.stderr)
+            sys.exit(2)
+        elif rc != 0:
+            raise subprocess.CalledProcessError(rc, ["topup.py", "run"])
 
 
 def run_llm_judge(cfg) -> None:
@@ -309,6 +320,13 @@ def cmd_run(args, cfg) -> None:
             save_state(state, state_file)
             break
 
+        except SystemExit as exc:
+            if exc.code == 2:
+                print("[loop] Stopping: topup produced 0 new examples.", file=sys.stderr)
+                entry["status"] = "no_new_data"
+                save_state(state, state_file)
+                sys.exit(2)
+            raise
         except subprocess.CalledProcessError as exc:
             print(f"[loop] Pipeline failed at step: {exc.cmd}", file=sys.stderr)
             entry["status"] = "failed"

@@ -253,6 +253,63 @@ TASKS = {
         "tools_needed": ["web_search", "write_file"],
         "complexity": "hard",
     },
+    "task_13_image_gen": {
+        "name": "Image Generation",
+        "prompt": (
+            "Generate an image of 'a friendly robot sitting in a cozy coffee shop, "
+            "reading a book' and save it as robot_cafe.png."
+        ),
+        "grading": [
+            "generate_image tool was called",
+            "Prompt contains robot, coffee shop/café, and book",
+            "Output saved as robot_cafe.png",
+            "Task completed successfully",
+        ],
+        "tools_needed": ["generate_image"],
+        "complexity": "easy",
+    },
+    "task_20_eli5_pdf": {
+        "name": "ELI5 PDF Summary",
+        "prompt": (
+            "Read GPT4.pdf (the OpenAI GPT-4 Technical Report) and write a "
+            "200–400 word ELI5 explanation to eli5_summary.txt. Use simple language "
+            "and child-friendly analogies. Do not use jargon like 'multimodal', "
+            "'transformer', 'RLHF', or 'benchmarks'."
+        ),
+        "grading": [
+            "GPT4.pdf read",
+            "eli5_summary.txt created",
+            "Word count 200–400",
+            "No technical jargon present",
+            "Uses analogies and simple comparisons",
+            "Accurate to the source material",
+        ],
+        "tools_needed": ["read_file", "write_file"],
+        "complexity": "medium",
+    },
+    "task_22_second_brain": {
+        "name": "Memory and Knowledge Management",
+        "prompt": (
+            "Store these user facts in memory/MEMORY.md and confirm they're saved:\n"
+            "- Programming language: Rust\n"
+            "- Started learning: January 15, 2024\n"
+            "- Mentor: Dr. Elena Vasquez (Stanford)\n"
+            "- Project: NeonDB (distributed key-value store)\n"
+            "- Team phrase: 'purple elephant sunrise'"
+        ),
+        "grading": [
+            "memory/ directory created",
+            "memory/MEMORY.md created",
+            "Rust as programming language stored",
+            "January 15, 2024 as learning start date stored",
+            "Dr. Elena Vasquez as mentor stored",
+            "NeonDB project stored",
+            "Team phrase 'purple elephant sunrise' stored",
+            "Agent confirms all facts were saved",
+        ],
+        "tools_needed": ["create_directory", "write_file", "write_memory"],
+        "complexity": "medium",
+    },
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -633,12 +690,16 @@ def cmd_collect():
         existing_val_counts[r["task_id"]] += 1
 
     new_train, new_val = [], []
+    per_task_added: dict[str, int] = defaultdict(int)
     for task_id, examples in new_examples.items():
         random.shuffle(examples)
         # Only add to val if this task is still short of VAL_PER_TASK
         val_deficit = max(0, VAL_PER_TASK - existing_val_counts[task_id])
-        new_val.extend(examples[:val_deficit])
-        new_train.extend(examples[val_deficit:])
+        t_val   = examples[:val_deficit]
+        t_train = examples[val_deficit:]
+        new_val.extend(t_val)
+        new_train.extend(t_train)
+        per_task_added[task_id] = len(t_train) + len(t_val)
 
     # Write merged dataset
     with open(TRAIN_FILE, "w") as f:
@@ -648,15 +709,26 @@ def cmd_collect():
         for r in existing_val + new_val:
             f.write(json.dumps(r) + "\n")
 
+    # Count final totals per task for logging
+    final_counts: dict[str, int] = defaultdict(int)
+    for r in existing_train + new_train + existing_val + new_val:
+        final_counts[r["task_id"]] += 1
+
     print(f"\n{'─'*50}")
     print(f"✓ Top-up complete")
     print(f"  API errors:     {errors}")
     print(f"  Parse failures: {parse_failures}")
-    print(f"  New train:      {len(new_train)}")
+    print(f"\n  Per-task additions:")
+    for task_id in sorted(set(list(new_examples.keys()) + list(per_task_added.keys()))):
+        added = per_task_added.get(task_id, 0)
+        total = final_counts.get(task_id, 0)
+        print(f"    {task_id:<40}  +{added:>3}  (total: {total})")
+    print(f"\n  New train:      {len(new_train)}")
     print(f"  New val:        {len(new_val)}")
     print(f"  Total train:    {len(existing_train) + len(new_train)}")
     print(f"  Total val:      {len(existing_val)   + len(new_val)}")
     print(f"\nRun: python topup.py count  to verify gaps are closed")
+    return len(new_train) + len(new_val)
 
 
 def cmd_run(only_tasks: list | None = None):
@@ -673,7 +745,7 @@ def cmd_run(only_tasks: list | None = None):
               f"succeeded={counts.succeeded} errored={counts.errored}")
         if batch.processing_status == "ended":
             break
-    cmd_collect()
+    return cmd_collect()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -698,6 +770,9 @@ if __name__ == "__main__":
     only_tasks = [t.strip() for t in args.tasks.split(",")] if args.tasks else None
 
     if args.command in ("submit", "run"):
-        {"submit": cmd_submit, "run": cmd_run}[args.command](only_tasks=only_tasks)
+        n_new = {"submit": cmd_submit, "run": cmd_run}[args.command](only_tasks=only_tasks)
+        if args.command == "run" and n_new == 0:
+            print("\n[topup] ERROR: 0 new examples collected — aborting.", file=sys.stderr)
+            sys.exit(2)
     else:
         {"count": cmd_count, "status": cmd_status, "collect": cmd_collect}[args.command]()
