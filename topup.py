@@ -29,10 +29,25 @@ BATCH_FILE = DATA_DIR / "topup_batch_id.txt"
 TRAIN_FILE = _cfg.train_file
 VAL_FILE   = _cfg.val_file
 
-MODEL             = "claude-sonnet-4-5"
-EXAMPLES_PER_CALL = int(os.environ.get("EXAMPLES_PER_CALL", "5"))
-TARGET_PER_TASK   = _cfg.data.examples_per_task  # from config.yaml
-VAL_PER_TASK      = 2
+MODEL           = "claude-sonnet-4-5"
+TARGET_PER_TASK = _cfg.data.examples_per_task  # from config.yaml
+VAL_PER_TASK    = 2
+
+# Hard tasks generate long examples — use EPC=1 to avoid token overflow
+HARD_TASKS = {
+    "task_09_files",
+    "task_10_workflow",
+    "task_12_skill_search",
+    "task_15_daily_summary",
+    "task_16_email_triage",
+    "task_17_email_search",
+    "task_18_market_research",
+    "task_21_openclaw_comprehension",
+}
+
+def _epc(task_id: str) -> int:
+    """Examples per Claude call for this task."""
+    return 1 if task_id in HARD_TASKS else 3
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OPENCLAW SYSTEM PROMPT
@@ -253,6 +268,43 @@ TASKS = {
         "tools_needed": ["web_search", "write_file"],
         "complexity": "hard",
     },
+    "task_11_config_update": {
+        "name": "Production Configuration Update",
+        "prompt": (
+            "Update the production config files config/settings.json and "
+            "config/database.yml: replace all 'localhost' with "
+            "'prod-db.example.com', rename DB from *_dev and *_test to *_prod, "
+            "change logging level from 'debug' to 'warn', update API endpoint "
+            "to 'https://api.example.com'."
+        ),
+        "grading": [
+            "localhost replaced with prod-db.example.com in both files",
+            "DB names updated to prod variants",
+            "Logging level changed from debug to warn",
+            "API endpoint updated to https://api.example.com",
+            "Both files remain valid JSON/YAML after edits",
+        ],
+        "tools_needed": ["read_file", "write_file"],
+        "complexity": "medium",
+    },
+    "task_19_spreadsheet_summary": {
+        "name": "Spreadsheet Data Analysis",
+        "prompt": (
+            "Read sales.csv and data.xlsx. Produce a markdown summary report "
+            "with: total revenue, total profit, top region, top product, "
+            "top department, and top employee."
+        ),
+        "grading": [
+            "Both files read",
+            "Total revenue: $119,900 correctly stated",
+            "Total profit: $47,960 correctly stated",
+            "Top region: East",
+            "Top product: Widget B",
+            "Top employee: Alice Chen",
+        ],
+        "tools_needed": ["read_file", "run_python", "write_file"],
+        "complexity": "medium",
+    },
     "task_21_openclaw_comprehension": {
         "name": "OpenClaw Report Comprehension",
         "prompt": (
@@ -432,13 +484,14 @@ def compute_deficits(target: int = TARGET_PER_TASK, only_tasks: list | None = No
             continue
         current = counts.get(task_id, 0)
         # When targeting specific tasks, always add examples even if at target
-        needed = target - current if not only_tasks else max(target - current, EXAMPLES_PER_CALL)
+        epc    = _epc(task_id)
+        needed = target - current if not only_tasks else max(target - current, epc)
         if needed > 0:
             deficits[task_id] = needed
     return deficits
 
 
-def build_meta_prompt(task_id: str, task: dict, variation: dict) -> str:
+def build_meta_prompt(task_id: str, task: dict, variation: dict, epc: int = 3) -> str:
     tools_hint = (
         f"Key tools for this task: {', '.join(task['tools_needed'])}"
         if task["tools_needed"] else "This task may not need tool calls."
@@ -471,7 +524,7 @@ Scenario: {variation["scenario"]}
 {error_note}
 
 ## Your Job
-Generate {EXAMPLES_PER_CALL} diverse, complete agent conversation examples.
+Generate {epc} diverse, complete agent conversation examples.
 
 Each example MUST follow this exact JSON structure:
 {{
@@ -501,7 +554,7 @@ Tool call format (inside assistant content):
 </tool_call>
 
 ## Critical Rules
-1. user_message must vary meaningfully across the {EXAMPLES_PER_CALL} examples.
+1. user_message must vary meaningfully across the {epc} examples.
 2. Tool arguments must be realistic and specific to the task.
 3. tool_result content must be plausible — use real-looking paths, timestamps, data.
 4. For tasks with specific expected values (exact figures, filenames, dates), those \
@@ -516,7 +569,7 @@ exact values MUST appear in the tool results and final response.
    Failure to escape will produce invalid JSON that cannot be parsed.
    Use single quotes inside code strings where possible to reduce escaping.
 
-Return ONLY a valid JSON array of {EXAMPLES_PER_CALL} objects. No markdown, no preamble.
+Return ONLY a valid JSON array of {epc} objects. No markdown, no preamble.
 """
 
 
@@ -555,10 +608,10 @@ def cmd_count():
         print(f"  {task_id:<40} {current:>5}  {TARGET_PER_TASK:>5}  {gap:>5}{flag}")
 
     total_new = sum(deficits.values())
-    batches   = sum((n + EXAMPLES_PER_CALL - 1) // EXAMPLES_PER_CALL for n in deficits.values())
+    batches   = sum((n + _epc(t) - 1) // _epc(t) for t, n in deficits.items())
     print(f"\n  New examples needed: ~{total_new}")
     print(f"  Batch requests:       {batches}")
-    print(f"  Est. cost:           ~${batches * EXAMPLES_PER_CALL * 0.015:.2f}")
+    print(f"  Est. cost:           ~${batches * 0.015:.2f}")
 
 
 def cmd_submit(only_tasks: list | None = None):
@@ -580,15 +633,14 @@ def cmd_submit(only_tasks: list | None = None):
     requests = []
     for task_id, needed in deficits.items():
         task = TASKS[task_id]
-        # How many batch calls do we need?
-        n_calls = (needed + EXAMPLES_PER_CALL - 1) // EXAMPLES_PER_CALL
-        # Cycle through variations to maximise diversity
+        epc  = _epc(task_id)
+        n_calls = (needed + epc - 1) // epc
+        # Scale token budget: hard tasks need more headroom for long code content
+        max_tok = 16000 if task_id in HARD_TASKS else 8192
         for i in range(n_calls):
             variation = VARIATION_CONFIGS[i % len(VARIATION_CONFIGS)]
             custom_id = f"topup__{task_id}__{variation['id']}__{i:03d}"
-            prompt    = build_meta_prompt(task_id, task, variation)
-            # Scale token budget: 1 example ≈ 3000 tokens for complex tasks
-            max_tok = min(16000, max(8192, EXAMPLES_PER_CALL * 3500))
+            prompt    = build_meta_prompt(task_id, task, variation, epc)
             requests.append({
                 "custom_id": custom_id,
                 "params": {
@@ -602,8 +654,10 @@ def cmd_submit(only_tasks: list | None = None):
     batch  = client.messages.batches.create(requests=requests)
     BATCH_FILE.write_text(batch.id)
 
-    print(f"\n✓ Submitted {len(requests)} requests × {EXAMPLES_PER_CALL} = "
-          f"~{len(requests) * EXAMPLES_PER_CALL} new examples")
+    total_examples = sum(
+        _epc(r["custom_id"].split("__")[1]) for r in requests
+    )
+    print(f"\n✓ Submitted {len(requests)} requests → ~{total_examples} new examples")
     print(f"  Batch ID: {batch.id}  (saved to {BATCH_FILE})")
     print(f"\n  python topup.py status    # check progress")
     print(f"  python topup.py collect   # when done")

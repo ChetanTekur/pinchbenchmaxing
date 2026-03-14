@@ -48,20 +48,6 @@ TASK_IDS = [
     "task_22_second_brain",
 ]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HARD TASKS  (use EXAMPLES_PER_CALL=1 to avoid truncation)
-# ─────────────────────────────────────────────────────────────────────────────
-HARD_TASKS = {
-    "task_09_files",            # multi-file Python project — long examples
-    "task_10_workflow",
-    "task_12_skill_search",
-    "task_15_daily_summary",
-    "task_16_email_triage",
-    "task_17_email_search",
-    "task_18_market_research",
-    "task_21_openclaw_comprehension",
-}
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SCORE PARSING
@@ -135,64 +121,22 @@ def run_cmd(cmd: list[str], env: dict | None = None, check: bool = True) -> int:
     return result.returncode
 
 
-def get_task_counts(cfg) -> dict[str, int]:
-    """Count existing examples per task from train + val files."""
-    import json as _json
-    from collections import defaultdict as _dd
-    counts: dict[str, int] = _dd(int)
-    for path in [cfg.train_file, cfg.val_file]:
-        if not path.exists():
-            continue
-        for line in path.read_text().splitlines():
-            line = line.strip()
-            if line:
-                try:
-                    rec = _json.loads(line)
-                    counts[rec.get("task_id", "unknown")] += 1
-                except Exception:
-                    pass
-    return dict(counts)
-
 
 def topup_weak_tasks(weak_tasks: list[str], cfg) -> None:
-    """Run topup.py for weak tasks that are still below the data target.
+    """Run topup.py to fill data gaps.
 
-    Skips tasks that already have enough examples — benchmark score being
-    low doesn't mean we need more data, it means we need better training.
-    Raises SystemExit(2) if all tasks are already at target (nothing to do).
+    topup.py computes deficits automatically via compute_deficits() —
+    no task list needed here. It skips tasks already at target and uses
+    per-task EPC (1 for hard tasks, 3 for normal) internally.
+    Raises SystemExit(2) if 0 new examples are produced.
     """
-    target = cfg.data.examples_per_task
-    counts = get_task_counts(cfg)
-
-    # Only topup tasks that genuinely need more examples
-    needs_data = [t for t in weak_tasks if counts.get(t, 0) < target]
-    has_enough  = [t for t in weak_tasks if counts.get(t, 0) >= target]
-
-    if has_enough:
-        print(f"[loop] Skipping topup for {len(has_enough)} tasks already at "
-              f"target ({target}): {has_enough}")
-
-    if not needs_data:
-        print(f"[loop] All weak tasks already have ≥{target} examples. "
-              "Proceeding directly to finetune.")
-        return
-
-    # Split into hard vs normal to set EXAMPLES_PER_CALL correctly
-    normal_tasks = [t for t in needs_data if t not in HARD_TASKS]
-    hard_tasks   = [t for t in needs_data if t in HARD_TASKS]
-
-    for task_group, epc in [(normal_tasks, "3"), (hard_tasks, "1")]:
-        if not task_group:
-            continue
-        task_str = ",".join(task_group)
-        env = {"TOPUP_TASKS": task_str, "EXAMPLES_PER_CALL": epc}
-        rc = run_cmd([sys.executable, "topup.py", "run", "--tasks", task_str], env=env, check=False)
-        if rc == 2:
-            print("[loop] ERROR: topup produced 0 new examples. "
-                  "Fix parse failures before continuing.", file=sys.stderr)
-            sys.exit(2)
-        elif rc != 0:
-            raise subprocess.CalledProcessError(rc, ["topup.py", "run"])
+    rc = run_cmd([sys.executable, "topup.py", "run"], check=False)
+    if rc == 2:
+        print("[loop] ERROR: topup produced 0 new examples. "
+              "Fix parse failures before continuing.", file=sys.stderr)
+        sys.exit(2)
+    elif rc != 0:
+        raise subprocess.CalledProcessError(rc, ["topup.py", "run"])
 
 
 def run_llm_judge(cfg) -> None:
