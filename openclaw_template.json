@@ -35,10 +35,10 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "ollama/qwen3.5:9b"
+        "primary": "ollama/__MODEL_NAME__:latest"
       },
       "models": {
-        "ollama/qwen3.5:9b": {}
+        "ollama/__MODEL_NAME__:latest": {}
       },
       "workspace": "/root/.openclaw/workspace",
       "compaction": {

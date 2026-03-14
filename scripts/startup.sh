@@ -62,12 +62,15 @@ if [ -z "$BRAVE_KEY" ]; then
 fi
 
 GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-$(openssl rand -hex 24)}"
+MODEL_NAME=$(python3 -c "from utils.config import load_config; print(load_config().ollama_model_name)" 2>/dev/null || echo "qwen35-9b-clawd")
 
 sed \
     -e "s|__OPENROUTER_API_KEY__|$OPENROUTER_KEY|g" \
     -e "s|__BRAVE_API_KEY__|$BRAVE_KEY|g" \
     -e "s|__OPENCLAW_GATEWAY_TOKEN__|$GATEWAY_TOKEN|g" \
+    -e "s|__MODEL_NAME__|$MODEL_NAME|g" \
     "$TEMPLATE" > "$DEST"
+echo "  Default model: ollama/$MODEL_NAME:latest"
 
 echo "  OpenClaw config written to $DEST"
 
@@ -122,13 +125,13 @@ OPENCLAW_PID=$!
 echo "  OpenClaw gateway PID: $OPENCLAW_PID"
 
 echo "  Waiting for OpenClaw gateway to be ready..."
-for i in $(seq 1 20); do
+for i in $(seq 1 60); do
     if curl -sf http://127.0.0.1:18789/health > /dev/null 2>&1; then
         echo "  OpenClaw gateway is up (after ${i}s)."
         break
     fi
     sleep 1
-    if [ "$i" -eq 20 ]; then
+    if [ "$i" -eq 60 ]; then
         echo "  WARNING: OpenClaw gateway health check timed out — check /tmp/openclaw-gateway.log"
     fi
 done
