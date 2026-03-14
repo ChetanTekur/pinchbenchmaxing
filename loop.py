@@ -259,19 +259,12 @@ def cmd_run(args, cfg) -> None:
     threshold  = cfg.loop.weak_task_threshold
 
     # ── 3. Main loop ─────────────────────────────────────────────────────────
-    # steps_this_run counts how many iterations we've run in THIS invocation.
-    # state["iteration"] is the cumulative total across all runs.
-    steps_this_run = 0
-    while steps_this_run < max_iter:
-        if state["iteration"] >= max_iter:
-            print(f"[loop] Reached max total iterations ({max_iter}). "
-                  "Update loop.max_iterations in config.yaml to continue.")
-            break
+    # max_iter = attempts per invocation; state["iteration"] = lifetime total
+    for step in range(1, max_iter + 1):
         state["iteration"] += 1
-        steps_this_run += 1
         iteration = state["iteration"]
         print(f"\n{'='*60}")
-        print(f"[loop] === ITERATION {iteration}/{max_iter} ===")
+        print(f"[loop] === ITERATION {step}/{max_iter} (lifetime #{iteration}) ===")
         print(f"{'='*60}")
 
         # Identify weak tasks — only among tasks that have been explicitly scored
