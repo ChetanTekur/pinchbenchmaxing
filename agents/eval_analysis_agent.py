@@ -439,12 +439,23 @@ For each hypothesis, provide 1–2 test prompts. These will be run against EVERY
 available model version to compare behavior. Pick prompts that would show
 clear behavioral differences between versions.
 
+For each hypothesis set evidence_type:
+- "data_only"   — fully evaluable from dataset/judge/validation signals alone.
+                  Do NOT add test_prompts (no Ollama call needed).
+- "behavioral"  — requires comparing model outputs across versions.
+                  Add 1–2 targeted test_prompts.
+
+Only mark "behavioral" when you genuinely cannot tell from data alone.
+This keeps probing fast: we only call Ollama when necessary, and only
+against the regression boundary pair (best version vs first regressed version).
+
 Return ONLY a valid JSON array:
 [
   {{
     "id": "h1",
     "hypothesis": "...",
     "confidence": "high|medium|low",
+    "evidence_type": "data_only|behavioral",
     "affected_tasks": ["task_XX", ...],
     "evidence": "which signals support this and how scores changed",
     "test_prompts": [
@@ -478,24 +489,86 @@ Return ONLY a valid JSON array with status field added:
 
     # ── Model Probing ─────────────────────────────────────────────────────────
 
+    def _select_probe_models(
+        self, hypothesis: dict, all_models: list[dict]
+    ) -> list[dict]:
+        """
+        Return the minimal set of models needed to test this hypothesis.
+
+        Strategy: probe only the REGRESSION BOUNDARY — the last good version
+        and the first regressed version. This is always the most informative
+        pair regardless of total model count.
+
+        If the hypothesis has evidence_type == "data_only" (evaluable purely
+        from dataset signals), return empty list → skip probing entirely.
+
+        Falls back to all models when there's no score history to identify
+        a boundary (early runs with <2 versions).
+        """
+        if hypothesis.get("evidence_type") == "data_only":
+            return []
+
+        # Sort by version number, filter to those with known scores
+        scored = [m for m in all_models
+                  if isinstance(m.get("version"), int) and m.get("avg_score") is not None]
+        scored.sort(key=lambda m: m["version"])
+
+        if len(scored) < 2:
+            # Not enough history — probe everything we have
+            return all_models
+
+        # Find the regression boundary: last version with score >= best,
+        # first version with score < best (i.e. where it dropped)
+        best_score = max(m["avg_score"] for m in scored)
+        regression_threshold = best_score - 0.03  # 3pt drop counts as regression
+
+        last_good  = None
+        first_bad  = None
+        for m in scored:
+            if m["avg_score"] >= regression_threshold:
+                last_good = m
+            elif last_good is not None and first_bad is None:
+                first_bad = m
+
+        if last_good and first_bad:
+            chosen = [last_good, first_bad]
+            self.log(f"    Boundary: {last_good['label']} (good) vs "
+                     f"{first_bad['label']} (regressed)")
+            # Also include current version if it's different
+            current = [m for m in scored if m == scored[-1] and m not in chosen]
+            return chosen + current
+
+        # No clear boundary (monotonically improving or all same) — probe all
+        return all_models
+
     def _probe_models(self, hypotheses: list[dict], models: list[dict]) -> list[dict]:
         results = []
         for hyp in hypotheses:
-            for p in hyp.get("test_prompts", []):
-                self.log(f"  Probe [{hyp['id']}/{p['id']}]: {p['description'][:60]}")
+            prompts = hyp.get("test_prompts", [])
+            if not prompts:
+                continue
+
+            probe_models = self._select_probe_models(hyp, models)
+            if not probe_models:
+                self.log(f"  [{hyp['id']}] data_only — no Ollama probe needed")
+                continue
+
+            for p in prompts:
+                self.log(f"  Probe [{hyp['id']}/{p['id']}]: {p['description'][:55]}"
+                         f"  ({len(probe_models)} models)")
                 probe: dict[str, Any] = {
-                    "hypothesis_id":    hyp["id"],
-                    "prompt_id":        p["id"],
-                    "description":      p["description"],
+                    "hypothesis_id":     hyp["id"],
+                    "prompt_id":         p["id"],
+                    "description":       p["description"],
                     "regression_signal": p.get("regression_signal", ""),
-                    "responses":        {},
+                    "models_probed":     [m["label"] for m in probe_models],
+                    "responses":         {},
                 }
                 tools = self._get_tools(p.get("tools_needed", []))
-                for model in models:
-                    oname = model["ollama_name"]
+                for model in probe_models:
                     self.log(f"    → {model['label']}")
                     resp = self._query_ollama(
-                        model=oname,
+                        model=model["ollama_name"],
                         system=p.get("system", "You are Clawd, an AI agent."),
                         user=p["user"],
                         tools=tools,
