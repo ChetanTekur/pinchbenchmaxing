@@ -52,6 +52,7 @@ TASK_IDS = [
 # HARD TASKS  (use EXAMPLES_PER_CALL=1 to avoid truncation)
 # ─────────────────────────────────────────────────────────────────────────────
 HARD_TASKS = {
+    "task_09_files",            # multi-file Python project — long examples
     "task_10_workflow",
     "task_12_skill_search",
     "task_15_daily_summary",
@@ -258,11 +259,11 @@ def cmd_run(args, cfg) -> None:
     threshold  = cfg.loop.weak_task_threshold
 
     # ── 3. Main loop ─────────────────────────────────────────────────────────
-    for _ in range(max_iter):
+    for loop_step in range(max_iter):
         state["iteration"] += 1
         iteration = state["iteration"]
         print(f"\n{'='*60}")
-        print(f"[loop] === ITERATION {iteration}/{max_iter} ===")
+        print(f"[loop] === ITERATION {loop_step + 1}/{max_iter} (total #{iteration}) ===")
         print(f"{'='*60}")
 
         # Identify weak tasks — only among tasks that have been explicitly scored

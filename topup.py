@@ -30,7 +30,7 @@ TRAIN_FILE = _cfg.train_file
 VAL_FILE   = _cfg.val_file
 
 MODEL             = "claude-sonnet-4-5"
-EXAMPLES_PER_CALL = 5
+EXAMPLES_PER_CALL = int(os.environ.get("EXAMPLES_PER_CALL", "5"))
 TARGET_PER_TASK   = _cfg.data.examples_per_task  # from config.yaml
 VAL_PER_TASK      = 2
 
@@ -251,6 +251,35 @@ TASKS = {
             "web_search tool used for current data",
         ],
         "tools_needed": ["web_search", "write_file"],
+        "complexity": "hard",
+    },
+    "task_21_openclaw_comprehension": {
+        "name": "OpenClaw Report Comprehension",
+        "prompt": (
+            "Read openclaw_report.pdf and answer these questions in answer.txt "
+            "(one answer per line, in order):\n"
+            "1. How many community-built skills before filtering?\n"
+            "2. How many skills after filtering?\n"
+            "3. Largest skill category? (format: 'Category Name: count')\n"
+            "4. Second-largest skill category? (same format)\n"
+            "5. What filename defines an OpenClaw skill?\n"
+            "6. What type of API does the OpenClaw gateway expose?\n"
+            "7. What date was the skills registry data collected?\n"
+            "8. How many new benchmark tasks does the paper propose?"
+        ),
+        "grading": [
+            "openclaw_report.pdf read",
+            "answer.txt created with 8 lines",
+            "Q1 answer: 5,705",
+            "Q2 answer: 2,999",
+            "Q3 answer: AI & LLMs: 287",
+            "Q4 answer: Search & Research: 253",
+            "Q5 answer: SKILL.md",
+            "Q6 answer: Typed WebSocket API",
+            "Q7 answer: February 7, 2026",
+            "Q8 answer: 6",
+        ],
+        "tools_needed": ["read_file", "write_file"],
         "complexity": "hard",
     },
     "task_13_image_gen": {
