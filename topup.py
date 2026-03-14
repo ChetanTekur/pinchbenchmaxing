@@ -411,9 +411,13 @@ def count_existing() -> dict[str, int]:
             continue
         for line in path.read_text().splitlines():
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 rec = json.loads(line)
                 counts[rec.get("task_id", "unknown")] += 1
+            except json.JSONDecodeError:
+                counts["__corrupt__"] += 1
     return counts
 
 
@@ -505,6 +509,12 @@ exact values MUST appear in the tool results and final response.
 5. The final assistant turn must confirm completion and satisfy ALL grading criteria.
 6. Do NOT skip required tool calls — if the task needs a file created, call write_file.
 7. For multi-document tasks, show ALL required files being read individually.
+8. JSON ESCAPING IS MANDATORY: Inside any JSON string value, you MUST escape:
+   - Double quotes as \\\"  (e.g. content with "quotes" → \\"quotes\\")
+   - Backslashes as \\\\
+   - Newlines as \\n
+   Failure to escape will produce invalid JSON that cannot be parsed.
+   Use single quotes inside code strings where possible to reduce escaping.
 
 Return ONLY a valid JSON array of {EXAMPLES_PER_CALL} objects. No markdown, no preamble.
 """
@@ -516,6 +526,21 @@ Return ONLY a valid JSON array of {EXAMPLES_PER_CALL} objects. No markdown, no p
 def cmd_count():
     counts   = count_existing()
     deficits = compute_deficits()
+
+    # ── Diagnostic: show resolved paths so path issues are visible ────────────
+    total_known = sum(v for k, v in counts.items() if k != "__corrupt__")
+    print(f"\n  Data paths:")
+    for path in [TRAIN_FILE, VAL_FILE]:
+        size = f"{path.stat().st_size:,} bytes" if path.exists() else "NOT FOUND"
+        print(f"    {path}  [{size}]")
+    print(f"  Total records loaded: {total_known}")
+    if counts.get("__corrupt__", 0):
+        print(f"  WARNING: {counts['__corrupt__']} corrupt lines skipped")
+    # Show any task_ids present in the data but not in TASKS dict
+    unknown_ids = {k: v for k, v in counts.items() if k not in TASKS and k not in ("__corrupt__", "unknown")}
+    if unknown_ids:
+        top = sorted(unknown_ids.items(), key=lambda x: -x[1])[:5]
+        print(f"  Tasks in data not shown below (top 5): {dict(top)}")
 
     print(f"\n{'═'*55}")
     print(f"  TASK COUNTS vs TARGET ({TARGET_PER_TASK})")
@@ -562,11 +587,13 @@ def cmd_submit(only_tasks: list | None = None):
             variation = VARIATION_CONFIGS[i % len(VARIATION_CONFIGS)]
             custom_id = f"topup__{task_id}__{variation['id']}__{i:03d}"
             prompt    = build_meta_prompt(task_id, task, variation)
+            # Scale token budget: 1 example ≈ 3000 tokens for complex tasks
+            max_tok = min(16000, max(8192, EXAMPLES_PER_CALL * 3500))
             requests.append({
                 "custom_id": custom_id,
                 "params": {
                     "model": MODEL,
-                    "max_tokens": 8192,
+                    "max_tokens": max_tok,
                     "messages": [{"role": "user", "content": prompt}],
                 },
             })
