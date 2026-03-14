@@ -30,8 +30,8 @@ curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt-get install -y nodejs
 node --version
 
-# Install real OpenClaw via official installer
-curl -fsSL https://openclaw.ai/install.sh | bash
+# Install OpenClaw via npm (more reliable than curl pipe)
+npm install -g openclaw@latest
 
 echo "=== [4/5] Verifying OpenClaw ==="
 export PATH="$HOME/.local/bin:$HOME/.openclaw/bin:/usr/local/bin:$PATH"

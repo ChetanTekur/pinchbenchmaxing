@@ -48,11 +48,11 @@ RUN python -c "from unsloth.save import install_llama_cpp_blocking; install_llam
 # ── Ollama ────────────────────────────────────────────────────────────────────
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
-# ── Node.js 22 + OpenClaw (real installer, not npm placeholder) ───────────────
+# ── Node.js 22 + OpenClaw ─────────────────────────────────────────────────────
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL https://openclaw.ai/install.sh | bash
+RUN npm install -g openclaw@latest
 
 # ── Copy project ──────────────────────────────────────────────────────────────
 COPY config.yaml             /root/config.yaml
