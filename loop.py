@@ -135,22 +135,57 @@ def run_cmd(cmd: list[str], env: dict | None = None, check: bool = True) -> int:
     return result.returncode
 
 
+def get_task_counts(cfg) -> dict[str, int]:
+    """Count existing examples per task from train + val files."""
+    import json as _json
+    from collections import defaultdict as _dd
+    counts: dict[str, int] = _dd(int)
+    for path in [cfg.train_file, cfg.val_file]:
+        if not path.exists():
+            continue
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    rec = _json.loads(line)
+                    counts[rec.get("task_id", "unknown")] += 1
+                except Exception:
+                    pass
+    return dict(counts)
+
+
 def topup_weak_tasks(weak_tasks: list[str], cfg) -> None:
-    """Run topup.py submit/collect for each weak task.
+    """Run topup.py for weak tasks that are still below the data target.
 
-    Raises SystemExit(2) if topup produces 0 new examples (propagated from topup.py).
+    Skips tasks that already have enough examples — benchmark score being
+    low doesn't mean we need more data, it means we need better training.
+    Raises SystemExit(2) if all tasks are already at target (nothing to do).
     """
-    # Split into hard vs normal to set EXAMPLES_PER_CALL correctly
-    normal_tasks = [t for t in weak_tasks if t not in HARD_TASKS]
-    hard_tasks   = [t for t in weak_tasks if t in HARD_TASKS]
+    target = cfg.data.examples_per_task
+    counts = get_task_counts(cfg)
 
-    total_new = 0
+    # Only topup tasks that genuinely need more examples
+    needs_data = [t for t in weak_tasks if counts.get(t, 0) < target]
+    has_enough  = [t for t in weak_tasks if counts.get(t, 0) >= target]
+
+    if has_enough:
+        print(f"[loop] Skipping topup for {len(has_enough)} tasks already at "
+              f"target ({target}): {has_enough}")
+
+    if not needs_data:
+        print(f"[loop] All weak tasks already have ≥{target} examples. "
+              "Proceeding directly to finetune.")
+        return
+
+    # Split into hard vs normal to set EXAMPLES_PER_CALL correctly
+    normal_tasks = [t for t in needs_data if t not in HARD_TASKS]
+    hard_tasks   = [t for t in needs_data if t in HARD_TASKS]
+
     for task_group, epc in [(normal_tasks, "3"), (hard_tasks, "1")]:
         if not task_group:
             continue
         task_str = ",".join(task_group)
         env = {"TOPUP_TASKS": task_str, "EXAMPLES_PER_CALL": epc}
-        # check=False so we can distinguish exit code 2 (no new data) from other errors
         rc = run_cmd([sys.executable, "topup.py", "run", "--tasks", task_str], env=env, check=False)
         if rc == 2:
             print("[loop] ERROR: topup produced 0 new examples. "
