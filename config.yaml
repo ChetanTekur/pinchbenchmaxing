@@ -14,7 +14,7 @@ benchmark:
   total_tasks: 23
 
 data:
-  examples_per_task: 40       # target examples per task in training set
+  examples_per_task: 70       # target examples per task in training set
   val_split: 0.1              # fraction held out for validation
   min_judge_score: 3          # filter examples below this quality score (1-5)
 

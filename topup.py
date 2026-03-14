@@ -31,7 +31,7 @@ VAL_FILE   = _cfg.val_file
 
 MODEL             = "claude-sonnet-4-5"
 EXAMPLES_PER_CALL = 5
-TARGET_PER_TASK   = 40   # desired minimum examples per task
+TARGET_PER_TASK   = _cfg.data.examples_per_task  # from config.yaml
 VAL_PER_TASK      = 2
 
 # ─────────────────────────────────────────────────────────────────────────────
