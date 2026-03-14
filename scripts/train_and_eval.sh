@@ -11,6 +11,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+export PYTHONPATH="$(pwd)"
 
 UPLOAD_FLAG=""
 [ "${NO_UPLOAD:-0}" = "1" ] && UPLOAD_FLAG="--no-upload"
