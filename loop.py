@@ -164,28 +164,32 @@ def cmd_run(args, cfg) -> None:
         state.history.append(state.snapshot("running"))
         save_state(state, state_file)
 
-        try:
-            for agent in pipeline:
-                print(f"\n── {agent.name.upper()} AGENT {'─'*40}")
+        for agent in pipeline:
+            print(f"\n── {agent.name.upper()} AGENT {'─'*40}")
+            try:
                 state = agent.run(state, cfg)
-
-            state.history[-1].update(state.snapshot("complete"))
-            save_state(state, state_file)
-
-        except SystemExit as exc:
-            if exc.code == 2:
-                print("[orchestrator] Data agent: 0 new examples. Fix parse failures.",
+            except SystemExit as exc:
+                if exc.code == 2:
+                    print(f"[orchestrator] {agent.name} agent: exited with code 2 "
+                          f"(no new data). Stopping.", file=sys.stderr)
+                    state.history[-1]["status"] = "no_new_data"
+                    state.history[-1]["failed_agent"] = agent.name
+                    save_state(state, state_file)
+                    sys.exit(2)
+                raise
+            except Exception as exc:
+                print(f"\n[orchestrator] ✗ {agent.name.upper()} AGENT FAILED: {exc}",
                       file=sys.stderr)
-                state.history[-1]["status"] = "no_new_data"
+                print(f"[orchestrator] Pipeline halted — fix {agent.name} before continuing.",
+                      file=sys.stderr)
+                state.history[-1]["status"]       = f"failed:{agent.name}"
+                state.history[-1]["failed_agent"] = agent.name
+                state.history[-1]["error"]        = str(exc)
                 save_state(state, state_file)
-                sys.exit(2)
-            raise
-        except Exception as exc:
-            print(f"[orchestrator] Pipeline failed: {exc}", file=sys.stderr)
-            state.history[-1]["status"] = "failed"
-            state.history[-1]["error"]  = str(exc)
-            save_state(state, state_file)
-            sys.exit(1)
+                sys.exit(1)
+
+        state.history[-1].update(state.snapshot("complete"))
+        save_state(state, state_file)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
