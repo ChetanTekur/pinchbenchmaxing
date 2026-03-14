@@ -170,10 +170,13 @@ def run_fix_modelfile(cfg) -> None:
     run_cmd(["bash", str(script)])
 
 
-def run_benchmark(cfg) -> None:
+def run_benchmark(cfg) -> Path:
+    """Run benchmark and return the log file path."""
     script = Path(__file__).parent / "scripts" / "benchmark_run.sh"
     model = f"ollama/{cfg.model_name}"
     run_cmd(["bash", str(script), model])
+    safe_name = model.replace("/", "_").replace(":", "_")
+    return Path(f"/tmp/bench_{safe_name}.log")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -229,8 +232,15 @@ def cmd_run(args, cfg) -> None:
         scores = last.get("scores", {})
         print(f"[loop] Resumed scores from iteration {last['iteration']} ({len(scores)} tasks).")
     else:
-        print("[loop] No scores provided and no prior state. Starting with all tasks as weak.")
-        scores = {t: 0.0 for t in TASK_IDS}
+        # No history and no scores — run benchmark first to get baseline
+        print("[loop] No prior scores found. Running benchmark to get baseline scores...")
+        log_file = run_benchmark(cfg)
+        scores = parse_scores_from_log(str(log_file))
+        if scores:
+            print(f"[loop] Parsed {len(scores)} task scores from benchmark log.")
+        else:
+            print("[loop] WARNING: Could not parse scores from log. Treating all tasks as weak.")
+            scores = {t: 0.0 for t in TASK_IDS}
 
     max_iter   = cfg.loop.max_iterations
     target     = cfg.loop.target_score
