@@ -568,6 +568,19 @@ exact values MUST appear in the tool results and final response.
    - Newlines as \\n
    Failure to escape will produce invalid JSON that cannot be parsed.
    Use single quotes inside code strings where possible to reduce escaping.
+9. ONLY USE REAL CLAWD TOOLS. The ONLY valid tool names are:
+   read_file, write_file, create_directory, list_files, run_bash, run_python,
+   web_search, fetch_url, create_calendar_event, draft_email, search_emails,
+   read_email, generate_image, read_memory, write_memory, search_skills, install_skill.
+   NEVER invent tool names. Tools like execute_python, list_directory, get_current_date,
+   execute_skill, move_file, file_exists, or ANY chart/visualization tool names
+   (plotly-*, matplotlib-*, bokeh-*, chart-*, viz-*, etc.) DO NOT EXIST.
+   If a task seems to need charting, use run_python with matplotlib code instead.
+10. task_00_sanity is a SIMPLE hello/greeting task. The agent should respond with a
+    brief greeting confirming it is ready. No system diagnostics, no multi-phase
+    protocols, no tool calls. Keep it trivial.
+11. The final assistant message MUST end with a complete sentence (period, !, or ?).
+    Never produce a response that cuts off mid-sentence — this is a truncation error.
 
 Return ONLY a valid JSON array of {epc} objects. No markdown, no preamble.
 """
