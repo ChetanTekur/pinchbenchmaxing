@@ -106,9 +106,12 @@ class Config:
     @property
     def gguf_file(self) -> Path:
         quant = self._data["convert"]["quantization"].upper()
-        # Unsloth names the file after the merged directory, not the model name
-        merged_name = f"{self.model_name}_merged"
-        return self.gguf_dir / f"{merged_name}.{quant}.gguf"
+        return self.gguf_dir / f"{self.model_name}.{quant}.gguf"
+
+    @property
+    def ollama_model_name(self) -> str:
+        """Ollama model tag — defaults to model.name, override with OLLAMA_MODEL env var."""
+        return os.environ.get("OLLAMA_MODEL", self.model_name)
 
     @property
     def train_file(self) -> Path:

@@ -11,15 +11,20 @@
 #   base qwen3:8b model (which ollama ships with proper tool-call support), then
 #   pointing FROM at the fine-tuned GGUF file. Re-creating the model with this fixed
 #   Modelfile restores full tool-calling capability for the fine-tuned weights.
+#
+# All values are derived from config.yaml via utils/config.py — nothing is hardcoded.
+# Override individual values with env vars: GGUF_PATH, OLLAMA_MODEL.
 
-WORKSPACE="${PBM_WORKSPACE:-./workspace}"
-MODEL_NAME="${FINETUNE_MODEL_NAME:-qwen35-9b-gguf-claw}"
-GGUF_PATH="${GGUF_PATH:-$WORKSPACE/models/qwen35-9b-clawd_merged_gguf/qwen35-9b-clawd_merged.Q4_K_M.gguf}"
+set -euo pipefail
+
+# ── Derive paths from config ──────────────────────────────────────────────────
+GGUF_PATH="${GGUF_PATH:-$(python3 -c "from utils.config import load_config; print(load_config().gguf_file)")}"
+MODEL_NAME="${OLLAMA_MODEL:-$(python3 -c "from utils.config import load_config; print(load_config().ollama_model_name)")}"
 MODELFILE="/tmp/Modelfile-clawd"
 
 if [ ! -f "$GGUF_PATH" ]; then
     echo "ERROR: GGUF not found at $GGUF_PATH"
-    echo "  Set GGUF_PATH env var or PBM_WORKSPACE to point to your workspace."
+    echo "  Run 'python -m stages.convert' first, or set GGUF_PATH to override."
     exit 1
 fi
 
@@ -103,7 +108,7 @@ SYSTEM """You are Clawd, an autonomous AI agent powered by OpenClaw. You help us
 EOF
 
 echo "Removing old model..."
-ollama rm "$MODEL_NAME" 2>/dev/null
+ollama rm "$MODEL_NAME" 2>/dev/null || true
 
 echo "Creating fixed model..."
 ollama create "$MODEL_NAME" -f "$MODELFILE"
