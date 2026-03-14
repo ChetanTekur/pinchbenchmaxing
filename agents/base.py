@@ -47,57 +47,143 @@ TASK_IDS = [
 # ─────────────────────────────────────────────────────────────────────────────
 # AGENT STATE  (flows between agents; persisted to loop_state.json)
 # ─────────────────────────────────────────────────────────────────────────────
+class PauseException(Exception):
+    """
+    Raised when the pipeline should pause for human review.
+    The reason is stored in state.pause_reason before raising.
+    Exit code 3 — distinct from error (1) and no-new-data (2).
+    """
+    pass
+
+
 @dataclass
 class AgentState:
     """
     Shared context that flows through the agent pipeline each iteration.
 
+    Versioning
+    ----------
+    model_version       — incremented by TrainerAgent after each fine-tune (0 = no model yet)
+    current_ollama_model — Ollama tag of the model to benchmark/probe (set by TrainerAgent)
+    eval_version        — model_version at which eval was last run (avoids redundant evals)
+    model_history       — [{version, ollama_name, avg_score, scores, timestamp}]
+    best_avg_score      — highest avg_score ever achieved across all versions
+    best_version        — model_version that achieved best_avg_score
+
+    Scoring
+    -------
     scores          — per-task benchmark scores (0.0–1.0) from EvalAgent
     weak_tasks      — tasks below threshold, identified by EvalAgent
-    failure_analysis — per-task failure notes; stub now, richer in future
-                       (e.g. "model never calls write_file for task_09")
-    history         — list of per-iteration summaries for loop_state.json
+    failure_analysis — per-task failure notes from EvalAgent + EvalAnalysisAgent
+
+    Control
+    -------
+    pause_reason    — human-readable explanation when PauseException is raised
+    history         — per-iteration snapshots for loop_state.json
     iteration       — lifetime iteration counter
     """
-    iteration:        int              = 0
-    scores:           dict             = field(default_factory=dict)
-    weak_tasks:       list             = field(default_factory=list)
-    failure_analysis: dict             = field(default_factory=dict)
-    history:          list             = field(default_factory=list)
+    # Scoring
+    iteration:           int   = 0
+    scores:              dict  = field(default_factory=dict)
+    weak_tasks:          list  = field(default_factory=list)
+    failure_analysis:    dict  = field(default_factory=dict)
+    history:             list  = field(default_factory=list)
+
+    # Model versioning
+    model_version:       int   = 0
+    current_ollama_model: str  = ""
+    eval_version:        int   = -1   # -1 = never evaled
+    model_history:       list  = field(default_factory=list)
+    best_avg_score:      float = 0.0
+    best_version:        int   = 0
+
+    # Control flow
+    pause_reason:        str   = ""
 
     @property
     def avg_score(self) -> float:
         return sum(self.scores.values()) / len(self.scores) if self.scores else 0.0
 
+    @property
+    def eval_is_current(self) -> bool:
+        """True if eval has already been run for the current model version."""
+        return self.eval_version == self.model_version and bool(self.scores)
+
+    def record_model(self, version: int, ollama_name: str) -> None:
+        """Called by TrainerAgent after registering a new model version."""
+        self.model_version       = version
+        self.current_ollama_model = ollama_name
+        self.eval_version        = -1  # invalidate — eval needed for new model
+
+    def record_eval(self, scores: dict) -> None:
+        """Called by EvalAgent after a successful eval."""
+        self.scores    = scores
+        self.eval_version = self.model_version
+        avg = self.avg_score
+        # Update model history entry for current version
+        entry = {
+            "version":     self.model_version,
+            "ollama_name": self.current_ollama_model,
+            "avg_score":   round(avg, 4),
+            "scores":      dict(scores),
+            "timestamp":   datetime.utcnow().isoformat(),
+        }
+        # Replace existing entry for this version or append
+        self.model_history = [
+            h for h in self.model_history if h["version"] != self.model_version
+        ]
+        self.model_history.append(entry)
+        # Track best
+        if avg > self.best_avg_score:
+            self.best_avg_score = avg
+            self.best_version   = self.model_version
+
     def snapshot(self, status: str) -> dict:
-        """Return a history entry for this iteration."""
         return {
-            "iteration":    self.iteration,
-            "timestamp":    datetime.utcnow().isoformat(),
-            "status":       status,
-            "avg_score":    round(self.avg_score, 4),
-            "scores":       dict(self.scores),
-            "weak_tasks":   list(self.weak_tasks),
-            "n_weak_tasks": len(self.weak_tasks),
+            "iteration":     self.iteration,
+            "timestamp":     datetime.utcnow().isoformat(),
+            "status":        status,
+            "model_version": self.model_version,
+            "ollama_model":  self.current_ollama_model,
+            "avg_score":     round(self.avg_score, 4),
+            "best_score":    round(self.best_avg_score, 4),
+            "scores":        dict(self.scores),
+            "weak_tasks":    list(self.weak_tasks),
+            "n_weak_tasks":  len(self.weak_tasks),
+            "pause_reason":  self.pause_reason,
         }
 
     def to_dict(self) -> dict:
         return {
-            "iteration":        self.iteration,
-            "scores":           self.scores,
-            "weak_tasks":       self.weak_tasks,
-            "failure_analysis": self.failure_analysis,
-            "history":          self.history,
+            "iteration":           self.iteration,
+            "scores":              self.scores,
+            "weak_tasks":          self.weak_tasks,
+            "failure_analysis":    self.failure_analysis,
+            "history":             self.history,
+            "model_version":       self.model_version,
+            "current_ollama_model": self.current_ollama_model,
+            "eval_version":        self.eval_version,
+            "model_history":       self.model_history,
+            "best_avg_score":      self.best_avg_score,
+            "best_version":        self.best_version,
+            "pause_reason":        self.pause_reason,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "AgentState":
         return cls(
-            iteration=        d.get("iteration", 0),
-            scores=           d.get("scores", {}),
-            weak_tasks=       d.get("weak_tasks", []),
-            failure_analysis= d.get("failure_analysis", {}),
-            history=          d.get("history", []),
+            iteration=            d.get("iteration", 0),
+            scores=               d.get("scores", {}),
+            weak_tasks=           d.get("weak_tasks", []),
+            failure_analysis=     d.get("failure_analysis", {}),
+            history=              d.get("history", []),
+            model_version=        d.get("model_version", 0),
+            current_ollama_model= d.get("current_ollama_model", ""),
+            eval_version=         d.get("eval_version", -1),
+            model_history=        d.get("model_history", []),
+            best_avg_score=       d.get("best_avg_score", 0.0),
+            best_version=         d.get("best_version", 0),
+            pause_reason=         d.get("pause_reason", ""),
         )
 
 
