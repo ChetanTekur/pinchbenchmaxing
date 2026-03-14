@@ -31,7 +31,7 @@ VAL_FILE   = _cfg.val_file
 
 MODEL           = "claude-sonnet-4-5"
 TARGET_PER_TASK = _cfg.data.examples_per_task  # from config.yaml
-VAL_PER_TASK    = 2
+VAL_SPLIT       = _cfg.data.val_split  # fraction from config.yaml (default 0.1)
 
 # Hard tasks generate long examples — use EPC=1 to avoid token overflow
 HARD_TASKS = {
@@ -132,9 +132,158 @@ Use tool calls like this:
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TASK DEFINITIONS (only deficit tasks included — no point shipping the rest)
+# TASK DEFINITIONS — all 23 PinchBench tasks
 # ─────────────────────────────────────────────────────────────────────────────
 TASKS = {
+    "task_00_sanity": {
+        "name": "Sanity Check",
+        "prompt": "Say 'Hello, I'm ready!' to confirm you can respond.",
+        "grading": ["Agent responded with any greeting or confirmation message"],
+        "tools_needed": [],
+        "complexity": "trivial",
+    },
+    "task_01_calendar": {
+        "name": "Calendar Event Creation",
+        "prompt": (
+            "Schedule a meeting called 'Project Sync' for next Tuesday at 3:00 PM "
+            "with attendee john@example.com and include a note about Q1 roadmap "
+            "discussion. Save it as an .ics (iCalendar) file in the workspace."
+        ),
+        "grading": [
+            "An .ics file is created in the workspace",
+            "Date is next Tuesday (dynamically calculated)",
+            "Start time is 3:00 PM (DTSTART contains T15)",
+            "Attendee john@example.com is present in the file",
+            "Summary/title contains 'Project Sync'",
+            "Description mentions roadmap",
+        ],
+        "tools_needed": ["create_calendar_event", "write_file"],
+        "complexity": "medium",
+    },
+    "task_02_stock": {
+        "name": "Stock Price Research",
+        "prompt": (
+            "Research Apple's (AAPL) current stock price and create stock_report.txt "
+            "with the current price, the date, and a brief market summary."
+        ),
+        "grading": [
+            "stock_report.txt is created in the workspace",
+            "File contains 'AAPL'",
+            "File contains a numeric price value (e.g. $185.42)",
+            "File contains a date reference",
+            "Market summary is at least 50 characters",
+            "File has 3 or more lines",
+        ],
+        "tools_needed": ["web_search", "fetch_url", "write_file"],
+        "complexity": "medium",
+    },
+    "task_03_blog": {
+        "name": "Blog Post Writing",
+        "prompt": (
+            "Write a ~500-word markdown blog post about the advantages of remote work "
+            "for software developers. Save it as blog_post.md."
+        ),
+        "grading": [
+            "blog_post.md is created",
+            "Word count is between 400 and 600",
+            "Has proper markdown structure: intro, headings, conclusion",
+            "Mentions at least 4 distinct advantages",
+            "Content is specific to software developers (not generic)",
+        ],
+        "tools_needed": ["write_file"],
+        "complexity": "medium",
+    },
+    "task_04_weather": {
+        "name": "Weather Script Creation",
+        "prompt": (
+            "Write a Python script weather.py that fetches and displays weather data "
+            "for San Francisco using the wttr.in API "
+            "(https://wttr.in/San_Francisco?format=j1)."
+        ),
+        "grading": [
+            "weather.py is created",
+            "Valid Python syntax (parseable by AST)",
+            "Uses an HTTP library (requests, urllib, or http.client)",
+            "References 'San Francisco' or the wttr.in URL",
+            "Has try/except error handling",
+            "Has a print statement for output",
+            "Has a function definition or if __name__ == '__main__' block",
+        ],
+        "tools_needed": ["write_file"],
+        "complexity": "medium",
+    },
+    "task_05_summary": {
+        "name": "Document Summarization",
+        "prompt": (
+            "Read summary_source.txt (an article about AI in healthcare) and write "
+            "a 3-paragraph summary (150-250 words) to summary_output.txt. "
+            "Paragraph 1: main topic/overview. Paragraph 2: key applications "
+            "(imaging, drug discovery, predictive analytics). Paragraph 3: "
+            "challenges and future (privacy, bias, explainability)."
+        ),
+        "grading": [
+            "summary_output.txt is created",
+            "Has exactly 3 paragraphs",
+            "Total word count 150-250",
+            "Covers AI in healthcare overview",
+            "Mentions key applications (imaging, drug discovery, predictive analytics)",
+            "Addresses challenges (privacy, algorithmic bias, explainability)",
+        ],
+        "tools_needed": ["read_file", "write_file"],
+        "complexity": "medium",
+    },
+    "task_06_events": {
+        "name": "Technology Events Research",
+        "prompt": (
+            "Find 5 legitimate upcoming technology conferences and compile them into "
+            "events.md. For each include: name, dates, location (city/country), "
+            "and website URL."
+        ),
+        "grading": [
+            "events.md is created",
+            "Contains exactly 5 entries",
+            "Each entry has name, dates, location, and URL",
+            "Events are real, verifiable technology conferences",
+            "Consistent markdown formatting with headings, lists, or links",
+        ],
+        "tools_needed": ["web_search", "write_file"],
+        "complexity": "medium",
+    },
+    "task_07_email": {
+        "name": "Email Drafting",
+        "prompt": (
+            "Draft a professional email declining a meeting due to scheduling "
+            "conflicts. Save as email_draft.txt. Include: greeting, clear decline, "
+            "reason (scheduling conflict), and offer to reschedule."
+        ),
+        "grading": [
+            "email_draft.txt is created",
+            "Professional and polite tone throughout",
+            "Meeting is clearly declined",
+            "Scheduling conflict is given as the reason",
+            "Offer to reschedule is included",
+            "Has a greeting and a closing/signature",
+            "Length is 50-150 words",
+        ],
+        "tools_needed": ["write_file"],
+        "complexity": "easy",
+    },
+    "task_08_memory": {
+        "name": "Memory and Context Retrieval",
+        "prompt": (
+            "Read project_notes.txt and extract the beta release deadline. "
+            "Save the answer to answer.txt."
+        ),
+        "grading": [
+            "answer.txt is created",
+            "Contains the correct date: June 1, 2024",
+            "Answer is clear and unambiguous",
+            "Agent called read_file on project_notes.txt (visible in tool calls)",
+            "No hallucinated or fabricated information",
+        ],
+        "tools_needed": ["read_file", "write_file"],
+        "complexity": "easy",
+    },
     "task_09_files": {
         "name": "Python Project Structure",
         "prompt": (
@@ -172,6 +321,25 @@ TASKS = {
         ],
         "tools_needed": ["read_file", "write_file"],
         "complexity": "hard",
+    },
+    "task_14_humanizer": {
+        "name": "Text Humanization",
+        "prompt": (
+            "Read ai_blog.txt and rewrite it to sound more natural and human. "
+            "Remove: 'In today's world', 'Furthermore', 'Moreover', hedging phrases, "
+            "overly formal language without contractions, and generic conclusions. "
+            "Save the result to humanized_blog.txt."
+        ),
+        "grading": [
+            "ai_blog.txt was read",
+            "humanized_blog.txt was created",
+            "Robotic opener phrases removed",
+            "Contractions and natural language used",
+            "Original meaning and content preserved",
+            "More conversational and engaging tone",
+        ],
+        "tools_needed": ["read_file", "write_file"],
+        "complexity": "medium",
     },
     "task_15_daily_summary": {
         "name": "Executive Briefing Synthesis",
@@ -332,6 +500,21 @@ TASKS = {
             "Q8 answer: 6",
         ],
         "tools_needed": ["read_file", "write_file"],
+        "complexity": "hard",
+    },
+    "task_12_skill_search": {
+        "name": "Skill Search and Discovery",
+        "prompt": (
+            "Search ClawHub for a data visualization skill, install the best "
+            "result, and use it to create a simple chart saved to chart_output.png."
+        ),
+        "grading": [
+            "search_skills tool was called",
+            "install_skill tool was called with a relevant skill name",
+            "An output file (chart or image) was created",
+            "Task completed end-to-end with the installed skill",
+        ],
+        "tools_needed": ["search_skills", "install_skill", "write_file"],
         "complexity": "hard",
     },
     "task_13_image_gen": {
@@ -816,8 +999,9 @@ def cmd_collect():
     per_task_added: dict[str, int] = defaultdict(int)
     for task_id, examples in new_examples.items():
         random.shuffle(examples)
-        # Only add to val if this task is still short of VAL_PER_TASK
-        val_deficit = max(0, VAL_PER_TASK - existing_val_counts[task_id])
+        # Allocate proportional val share; only add if task is still below target
+        val_target  = max(2, round(TARGET_PER_TASK * VAL_SPLIT))
+        val_deficit = max(0, val_target - existing_val_counts[task_id])
         t_val   = examples[:val_deficit]
         t_train = examples[val_deficit:]
         new_val.extend(t_val)
