@@ -154,15 +154,15 @@ def run_llm_judge(cfg) -> None:
 
 
 def run_prepare(cfg) -> None:
-    run_cmd([sys.executable, "stages/prepare.py"])
+    run_cmd([sys.executable, "-m", "stages.prepare"])
 
 
 def run_finetune(cfg) -> None:
-    run_cmd([sys.executable, "stages/finetune.py"])
+    run_cmd([sys.executable, "-m", "stages.finetune"])
 
 
 def run_convert(cfg) -> None:
-    run_cmd([sys.executable, "stages/convert.py"])
+    run_cmd([sys.executable, "-m", "stages.convert"])
 
 
 def run_fix_modelfile(cfg) -> None:
