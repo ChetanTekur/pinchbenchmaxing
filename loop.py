@@ -212,20 +212,25 @@ def cmd_status(args, cfg) -> None:
 
 
 def cmd_run(args, cfg) -> None:
-    # ── 1. Parse initial scores ─────────────────────────────────────────────
+    # ── 1. Load / init state ─────────────────────────────────────────────────
+    state_file = cfg.data_dir / "loop_state.json"
+    state = load_state(state_file)
+
+    # ── 2. Parse scores ──────────────────────────────────────────────────────
     if args.scores:
         scores = parse_scores_from_json_str(args.scores)
         print(f"[loop] Loaded {len(scores)} task scores from --scores argument.")
     elif args.log:
         scores = parse_scores_from_log(args.log)
         print(f"[loop] Parsed {len(scores)} task scores from log: {args.log}")
+    elif state.get("history"):
+        # Resume from last iteration's scores
+        last = state["history"][-1]
+        scores = last.get("scores", {})
+        print(f"[loop] Resumed scores from iteration {last['iteration']} ({len(scores)} tasks).")
     else:
-        print("[loop] No scores provided. Starting with all tasks as weak.")
+        print("[loop] No scores provided and no prior state. Starting with all tasks as weak.")
         scores = {t: 0.0 for t in TASK_IDS}
-
-    # ── 2. Load / init state ─────────────────────────────────────────────────
-    state_file = cfg.data_dir / "loop_state.json"
-    state = load_state(state_file)
 
     max_iter   = cfg.loop.max_iterations
     target     = cfg.loop.target_score
