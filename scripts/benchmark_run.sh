@@ -20,7 +20,7 @@
 
 set -euo pipefail
 
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.openclaw/bin:/usr/local/bin:$PATH"
 
 WORKSPACE="${PBM_WORKSPACE:-./workspace}"
 BENCH_DIR="$WORKSPACE/skill"
