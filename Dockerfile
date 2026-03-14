@@ -2,6 +2,7 @@
 FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
 
 # ── System packages ─────────────────────────────────────────────────────────
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         wget \
@@ -10,6 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq \
         build-essential \
         ca-certificates \
+        libssl-dev \
+        libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python packages ──────────────────────────────────────────────────────────
