@@ -289,17 +289,21 @@ def cmd_run(args, cfg) -> None:
             run_finetune(cfg)
             run_convert(cfg)
             run_fix_modelfile(cfg)
-            run_benchmark(cfg)
+            log_file = run_benchmark(cfg)
 
-            # After benchmark, prompt user to provide new scores for next iteration
-            print(
-                "\n[loop] Benchmark complete. To continue the loop, re-run with "
-                "new scores:\n"
-                "  python loop.py run --scores '{\"task_XX_name\": 0.5, ...}'"
-            )
-            entry["status"] = "awaiting_scores"
+            # Parse scores from benchmark log and feed into next iteration
+            new_scores = parse_scores_from_log(str(log_file))
+            if new_scores:
+                scores = new_scores
+                avg = sum(scores.values()) / len(scores)
+                print(f"[loop] Benchmark parsed: {len(scores)} tasks, avg={avg:.3f}")
+                entry["scores"]    = dict(scores)
+                entry["avg_score"] = round(avg, 4)
+            else:
+                print("[loop] WARNING: Could not parse scores from benchmark log. "
+                      "Scores unchanged for next iteration.")
+            entry["status"] = "complete"
             save_state(state, state_file)
-            break
 
         except SystemExit as exc:
             if exc.code == 2:
