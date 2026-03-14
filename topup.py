@@ -536,28 +536,49 @@ def parse_example(raw: dict, task_id: str) -> dict | None:
 
 
 def extract_json_array(text: str):
+    """Extract and merge ALL JSON arrays from a response.
+
+    Claude sometimes returns multiple separate JSON arrays (one per example)
+    when examples are long. This merges all of them into a single list.
+    """
     import re
     text = text.strip()
-    for pattern in [
-        r'```(?:json)?\s*\n([\s\S]*?)\n```',
-    ]:
-        m = re.search(pattern, text)
-        if m:
-            try:
-                return json.loads(m.group(1).strip())
-            except json.JSONDecodeError:
-                pass
-    m = re.search(r'(\[[\s\S]*\])', text)
-    if m:
+    merged = []
+
+    # Find all ```json ... ``` or ``` ... ``` code blocks
+    blocks = re.findall(r'```(?:json)?\s*\n([\s\S]*?)\n```', text)
+    for block in blocks:
         try:
-            return json.loads(m.group(1))
+            result = json.loads(block.strip())
+            if isinstance(result, list):
+                merged.extend(result)
+            elif isinstance(result, dict):
+                merged.append(result)
         except json.JSONDecodeError:
             pass
+
+    if merged:
+        return merged
+
+    # No code blocks — try finding all top-level JSON arrays in the text
+    for m in re.finditer(r'\[[\s\S]*?\](?=\s*(?:\[|$|```))', text):
+        try:
+            result = json.loads(m.group(0))
+            if isinstance(result, list):
+                merged.extend(result)
+        except json.JSONDecodeError:
+            pass
+
+    if merged:
+        return merged
+
+    # Last resort — parse the whole thing
     try:
         result = json.loads(text)
         return result if isinstance(result, list) else [result]
     except json.JSONDecodeError:
         pass
+
     return None
 
 
