@@ -15,6 +15,8 @@ from pathlib import Path
 
 from .base import Agent, AgentState
 
+_PROJECT_ROOT = Path(__file__).parent.parent
+
 
 class CuratorAgent(Agent):
     """
@@ -34,8 +36,9 @@ class CuratorAgent(Agent):
         scores_file = cfg.data_dir / "scores.json"
 
         # Gate 1: Score all examples
+        judge = str(_PROJECT_ROOT / "llm_judge.py")
         self.log("Running LLM judge on all examples (this may take a while)...")
-        self.run_cmd([sys.executable, "llm_judge.py", "run"])
+        self.run_cmd([sys.executable, judge, "run"])
 
         if not scores_file.exists():
             raise RuntimeError(
@@ -46,7 +49,7 @@ class CuratorAgent(Agent):
 
         # Gate 2: Filter by min score
         self.log(f"Filtering examples with min score {min_score}/5...")
-        self.run_cmd([sys.executable, "llm_judge.py", "filter", "--min", str(min_score)])
+        self.run_cmd([sys.executable, judge, "filter", "--min", str(min_score)])
 
         # Gate 3: Verify output is non-empty
         train_file = cfg.train_file

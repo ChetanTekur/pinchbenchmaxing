@@ -14,8 +14,11 @@ DataAgent's future role:
 
 import subprocess
 import sys
+from pathlib import Path
 
 from .base import Agent, AgentState
+
+_PROJECT_ROOT = Path(__file__).parent.parent
 
 
 class DataAgent(Agent):
@@ -41,7 +44,8 @@ class DataAgent(Agent):
                 self.log(f"  {task}: {note}")
 
         self.log("Running topup (deficit auto-computed from data counts)...")
-        rc = self.run_cmd([sys.executable, "topup.py", "run"], check=False)
+        topup = str(_PROJECT_ROOT / "topup.py")
+        rc = self.run_cmd([sys.executable, topup, "run"], check=False)
 
         if rc == 2:
             self.log("All tasks already at target — no new data needed.")

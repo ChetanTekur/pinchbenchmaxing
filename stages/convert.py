@@ -68,7 +68,7 @@ def main():
 
     # Unsloth saves to <merged_path>_gguf/, not gguf_dir
     unsloth_out = merged_path.parent / (merged_path.name + "_gguf")
-    candidates = list(unsloth_out.glob("*.Q4_K_M.gguf")) or list(unsloth_out.glob("*.gguf"))
+    candidates = list(unsloth_out.glob(f"*.{quant.upper()}.gguf")) or list(unsloth_out.glob("*.gguf"))
     if not candidates:
         raise RuntimeError(f"No .gguf file found in {unsloth_out} after conversion.")
 
@@ -79,7 +79,7 @@ def main():
 
     print(f"\nDone! GGUF at: {gguf_file}")
     print(f"\nNext step: register with Ollama")
-    print(f"  python stages/register.py")
+    print(f"  OLLAMA_MODEL=<name> bash scripts/fix_modelfile.sh")
 
 
 if __name__ == "__main__":
