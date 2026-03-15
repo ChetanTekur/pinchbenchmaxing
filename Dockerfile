@@ -54,20 +54,20 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 RUN npm install -g openclaw@latest
 
-# ── Copy project ──────────────────────────────────────────────────────────────
-COPY config.yaml             /root/config.yaml
-COPY utils/                  /root/utils/
-COPY stages/                 /root/stages/
-COPY scripts/                /root/scripts/
-
+# ── Bootstrap scripts only (code is cloned by startup.sh at runtime) ─────────
+# The full repo is cloned to /root/pbm on first start, then git pull on restarts.
+# This keeps the image stable and lets you update code with just git push + pod restart.
+COPY scripts/startup.sh  /root/scripts/startup.sh
+COPY scripts/set_env.sh  /root/scripts/set_env.sh
 RUN chmod +x /root/scripts/*.sh
 
 # ── ENV ───────────────────────────────────────────────────────────────────────
 ENV PATH="/root/.local/bin:/root/.openclaw/bin:/usr/local/bin:${PATH}" \
     OLLAMA_HOST="0.0.0.0:11434" \
-    PBM_WORKSPACE="/workspace/synthbench"
+    PBM_WORKSPACE="/workspace/synthbench" \
+    PYTHONPATH="/root/pbm"
 
-WORKDIR /root
+WORKDIR /root/pbm
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 CMD ["/bin/bash", "-c", "bash /root/scripts/startup.sh && tail -f /dev/null"]

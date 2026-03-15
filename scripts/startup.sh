@@ -21,6 +21,38 @@ set -euo pipefail
 export PATH="$HOME/.local/bin:$HOME/.openclaw/bin:/usr/local/bin:$PATH"
 
 WORKSPACE="${PBM_WORKSPACE:-./workspace}"
+REPO_DIR="/root/pbm"
+REPO_URL="https://github.com/ChetanTekur/pinchbenchmaxing.git"
+ENV_FILE="/workspace/synthbench/set_env.sh"
+
+# ── 0a. Load persistent env vars (API keys) ──────────────────────────────────
+if [ -f "$ENV_FILE" ]; then
+    echo "=== [0/5] Loading env vars from $ENV_FILE ==="
+    set +u  # allow unset vars during source
+    source "$ENV_FILE"
+    set -u
+    echo "  ANTHROPIC_API_KEY:      ${ANTHROPIC_API_KEY:+set}"
+    echo "  OPENROUTER_API_KEY:     ${OPENROUTER_API_KEY:+set}"
+    echo "  BRAVE_API_KEY:          ${BRAVE_API_KEY:+set}"
+    echo "  OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:+set}"
+else
+    echo "=== [0/5] No env file at $ENV_FILE — using existing env vars ==="
+    echo "  To persist API keys across restarts:"
+    echo "    cp /root/scripts/set_env.sh $ENV_FILE"
+    echo "    vim $ENV_FILE  # fill in keys"
+fi
+
+# ── 0b. Clone or update project repo ─────────────────────────────────────────
+echo ""
+if [ -d "$REPO_DIR/.git" ]; then
+    echo "=== Updating repo: git pull ==="
+    git -C "$REPO_DIR" pull --ff-only 2>&1 | sed 's/^/  /'
+else
+    echo "=== Cloning repo to $REPO_DIR ==="
+    git clone "$REPO_URL" "$REPO_DIR" 2>&1 | sed 's/^/  /'
+fi
+export PYTHONPATH="$REPO_DIR"
+echo "  PYTHONPATH=$PYTHONPATH"
 
 # ── 1. Kill stale processes ───────────────────────────────────────────────────
 echo "=== [1/5] Killing stale openclaw / ollama processes ==="
@@ -38,9 +70,8 @@ echo ""
 echo "=== [2/5] Configuring OpenClaw ==="
 mkdir -p "$HOME/.openclaw"
 
-# Find template relative to this script's location
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TEMPLATE="$SCRIPT_DIR/../openclaw_template.json"
+# Template is in the cloned repo
+TEMPLATE="$REPO_DIR/openclaw_template.json"
 DEST="$HOME/.openclaw/openclaw.json"
 
 if [ ! -f "$TEMPLATE" ]; then
@@ -62,7 +93,7 @@ if [ -z "$BRAVE_KEY" ]; then
 fi
 
 GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-$(openssl rand -hex 24)}"
-MODEL_NAME=$(python3 -c "from utils.config import load_config; print(load_config().ollama_model_name)" 2>/dev/null || echo "qwen35-9b-clawd")
+MODEL_NAME=$(cd "$REPO_DIR" && python3 -c "from utils.config import load_config; print(load_config().ollama_model_name)" 2>/dev/null || echo "qwen35-9b-clawd")
 
 sed \
     -e "s|__OPENROUTER_API_KEY__|$OPENROUTER_KEY|g" \
