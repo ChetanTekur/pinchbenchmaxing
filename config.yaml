@@ -36,7 +36,7 @@ convert:
   quantization: q4_k_m        # q4_k_m (default), q8_0 (higher quality), f16 (no quant)
 
 loop:
-  max_iterations: 5
-  target_score: 0.80          # stop when benchmark score exceeds this
+  max_iterations: 2           # increase after verifying the loop works correctly
+  target_score: 0.85          # stop when benchmark score exceeds this
   weak_task_threshold: 0.50   # tasks below this get more synthetic data each iteration
   examples_per_weak_task: 20  # examples to generate per weak task per iteration
