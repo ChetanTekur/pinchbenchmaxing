@@ -289,8 +289,26 @@ def cmd_run(args, cfg) -> None:
         except PauseException:
             raise
         except RuntimeError as exc:
-            # Analysis failure is non-fatal — log and continue
-            print(f"[orchestrator] WARNING: analysis failed: {exc}  (continuing)")
+            pause(state, state_file,
+                  f"EvalAnalysisAgent failed: {exc}. "
+                  f"Fix the analysis error and resume before training.")
+
+        # GATE: analysis must have produced a real diagnosis before we spend
+        # GPU money training on potentially misguided data.
+        analysis = state.last_analysis
+        if not analysis:
+            pause(state, state_file,
+                  "EvalAnalysisAgent produced no diagnosis (last_analysis is empty). "
+                  "Check EvalAnalysisAgent logs and resume when fixed.")
+        err_summary = analysis.get("summary", "")
+        if err_summary.startswith("Error:"):
+            pause(state, state_file,
+                  f"EvalAnalysisAgent diagnosis is an error: {err_summary}. "
+                  f"Fix the underlying issue and resume.")
+        if not analysis.get("root_causes") and not analysis.get("data_fixes"):
+            pause(state, state_file,
+                  "EvalAnalysisAgent returned no root_causes and no data_fixes — "
+                  "diagnosis appears empty. Review eval_analysis_*.json and resume.")
 
         save_state(state, state_file)
 
