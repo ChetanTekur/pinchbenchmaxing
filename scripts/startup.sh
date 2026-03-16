@@ -54,13 +54,27 @@ else
 fi
 
 # ── 0b. Clone or update project repo ─────────────────────────────────────────
+# RunPod DNS can take a few seconds to come up on cold starts — retry git ops.
 echo ""
-if [ -d "$REPO_DIR/.git" ]; then
-    echo "=== Updating repo: git pull ==="
-    git -C "$REPO_DIR" pull --ff-only 2>&1 | sed 's/^/  /'
-else
-    echo "=== Cloning repo to $REPO_DIR ==="
-    git clone "$REPO_URL" "$REPO_DIR" 2>&1 | sed 's/^/  /'
+_git_ok=false
+for _attempt in $(seq 1 10); do
+    if [ -d "$REPO_DIR/.git" ]; then
+        echo "=== Updating repo: git pull (attempt $_attempt) ==="
+        if git -C "$REPO_DIR" pull --ff-only 2>&1 | sed 's/^/  /'; then
+            _git_ok=true; break
+        fi
+    else
+        echo "=== Cloning repo to $REPO_DIR (attempt $_attempt) ==="
+        if git clone "$REPO_URL" "$REPO_DIR" 2>&1 | sed 's/^/  /'; then
+            _git_ok=true; break
+        fi
+    fi
+    echo "  DNS not ready, retrying in 5s..."
+    sleep 5
+done
+if [ "$_git_ok" = false ]; then
+    echo "  ERROR: Could not reach github.com after 10 attempts."
+    echo "  Check network connectivity. Continuing without code update."
 fi
 export PYTHONPATH="$REPO_DIR"
 echo "  PYTHONPATH=$PYTHONPATH"
