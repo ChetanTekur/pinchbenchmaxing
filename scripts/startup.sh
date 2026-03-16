@@ -188,7 +188,7 @@ if [ -f "$STATE_FILE" ]; then
     CURRENT_MODEL=$(python3 -c "import json; d=json.load(open('$STATE_FILE')); print(d.get('current_ollama_model',''))" 2>/dev/null || true)
     if [ -n "$CURRENT_MODEL" ]; then
         echo "  Found model in loop state: $CURRENT_MODEL"
-        OLLAMA_MODEL="$CURRENT_MODEL" bash "$REPO_DIR/scripts/fix_modelfile.sh" \
+        OLLAMA_MODEL="$CURRENT_MODEL" bash "$REPO_DIR/scripts/register_model.sh" \
             && echo "  [OK] $CURRENT_MODEL registered" \
             || echo "  [WARN] Registration failed — GGUF may not exist yet (first run?)"
     else

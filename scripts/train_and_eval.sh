@@ -41,7 +41,7 @@ echo ""
 
 # ── Step 4: Register with Ollama ─────────────────────────────────────────────
 echo "--- Step 4/5: Register with Ollama (model: $MODEL_NAME) ---"
-OLLAMA_MODEL="$MODEL_NAME" bash scripts/fix_modelfile.sh
+OLLAMA_MODEL="$MODEL_NAME" bash scripts/register_model.sh
 echo ""
 
 # ── Step 5: Run benchmark ────────────────────────────────────────────────────

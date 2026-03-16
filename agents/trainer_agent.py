@@ -6,7 +6,7 @@ Each run increments model_version and registers:
 
 Previous versions remain registered so EvalAnalysisAgent can probe them.
 
-Pipeline: prepare → finetune → convert → fix_modelfile (versioned) → verify
+Pipeline: prepare → finetune → convert → register_model (versioned) → verify
 """
 
 import subprocess
@@ -46,8 +46,8 @@ class TrainerAgent(Agent):
         self.log(f"GGUF verified: {gguf} ({gguf.stat().st_size // 1024 // 1024} MB)")
 
         # ── Register versioned model in Ollama ────────────────────────────────
-        self.log(f"Registering '{versioned_name}' in Ollama via fix_modelfile.sh ...")
-        fix_script = Path(__file__).parent.parent / "scripts" / "fix_modelfile.sh"
+        self.log(f"Registering '{versioned_name}' in Ollama via register_model.sh ...")
+        fix_script = Path(__file__).parent.parent / "scripts" / "register_model.sh"
         self.run_cmd(
             ["bash", str(fix_script)],
             env={"OLLAMA_MODEL": versioned_name},
@@ -68,7 +68,7 @@ class TrainerAgent(Agent):
         )
         if model_name not in result.stdout:
             raise RuntimeError(
-                f"fix_modelfile.sh completed but '{model_name}' not found in "
+                f"register_model.sh completed but '{model_name}' not found in "
                 f"'ollama list'. Registration may have failed."
             )
 

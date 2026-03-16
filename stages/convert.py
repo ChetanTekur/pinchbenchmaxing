@@ -79,7 +79,7 @@ def main():
 
     print(f"\nDone! GGUF at: {gguf_file}")
     print(f"\nNext step: register with Ollama")
-    print(f"  OLLAMA_MODEL=<name> bash scripts/fix_modelfile.sh")
+    print(f"  OLLAMA_MODEL=<name> bash scripts/register_model.sh")
 
 
 if __name__ == "__main__":

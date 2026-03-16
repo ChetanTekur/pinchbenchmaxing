@@ -96,7 +96,7 @@ fi
 if ollama list 2>/dev/null | grep -q "qwen35-9b-gguf-claw"; then
     green "qwen35-9b-gguf-claw registered in Ollama"
 else
-    red "qwen35-9b-gguf-claw not found in Ollama — run fix_modelfile.sh"
+    red "qwen35-9b-gguf-claw not found in Ollama — run register_model.sh"
 fi
 
 # ── 5. API Keys ───────────────────────────────────────────────────────────────

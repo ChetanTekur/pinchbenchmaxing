@@ -89,7 +89,7 @@ if [[ "$MODEL" == ollama/* ]]; then
         echo "  Available models:"
         ollama list 2>/dev/null | sed 's/^/    /' || echo "    (could not list)"
         echo ""
-        echo "  If this is the fine-tuned GGUF model, run fix_modelfile.sh first."
+        echo "  If this is the fine-tuned GGUF model, run register_model.sh first."
         echo "  Proceeding anyway — ollama will error if the model is truly missing."
     else
         echo "  [OK] Ollama model '$OLLAMA_MODEL' is registered"

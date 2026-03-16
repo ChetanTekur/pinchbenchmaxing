@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fix Qwen3 fine-tuned GGUF Modelfile with correct chat template and tool support
+# Register a fine-tuned GGUF model in Ollama with correct chat template and tool support
 #
 # WHY THIS SCRIPT EXISTS:
 #   When you convert a fine-tuned model to GGUF and register it with ollama, the
