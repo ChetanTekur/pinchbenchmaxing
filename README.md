@@ -1,8 +1,10 @@
 # PinchBench Maxing
 
-An agentic fine-tuning loop that autonomously improves an open-source LLM on [PinchBench](https://pinchbench.com) — a 23-task benchmark for AI agents.
+A multi-agent system that autonomously fine-tunes an open-source LLM to compete on [PinchBench](https://pinchbench.com) — a 23-task benchmark for AI agents.
 
-The loop runs overnight: evaluate the current model, diagnose failures with Claude, generate targeted synthetic training data, curate it, fine-tune, and repeat — without human intervention between iterations. In spirit, this is the same idea as [Karpathy's autoresearch](https://github.com/karpathy/autoresearch): let an AI agent drive the improvement loop while you sleep.
+Five specialized agents work together in a loop: one benchmarks the model, one diagnoses failures using Claude, one generates targeted training data, one curates quality, one trains. Each agent has a single, well-defined responsibility. They communicate through a shared `AgentState` that persists to disk — so the system survives pod restarts and can be resumed at any stage. No agent needs to know what the others do internally; they only read from and write to the shared state.
+
+The loop runs overnight without human intervention. This is the same idea as [Karpathy's autoresearch](https://github.com/karpathy/autoresearch): give an AI system a metric to optimize and let it drive the improvement cycle while you sleep. The difference here is that instead of modifying training code, the agents modify the *training data* — using Claude to understand what the model gets wrong and synthesize examples that target exactly those gaps.
 
 ---
 
@@ -36,33 +38,38 @@ The loop runs overnight: evaluate the current model, diagnose failures with Clau
          State: loop_state.json (persisted across restarts)
 ```
 
-Each iteration:
+Each agent has one job. They hand off through `AgentState`:
 
-1. **EvalAgent** — runs PinchBench against the current model, parses per-task scores, identifies weak tasks (below `weak_task_threshold`)
-2. **EvalAnalysisAgent** — probes all registered model versions via Ollama, asks Claude to generate and test hypotheses about *why* specific tasks are failing, produces an actionable diagnosis with root causes and data fixes
-3. **DataAgent** — uses the diagnosis to call `topup.py` for weak tasks, submitting to the Claude Batch API for cost-efficient data generation
-4. **CuratorAgent** — runs `llm_judge.py` to score all examples 1–5, filters below the quality threshold, verifies the dataset is non-empty
-5. **TrainerAgent** — runs prepare → finetune → convert → registers a versioned model in Ollama (`qwen35-9b-clawd-v4`, etc.)
+**1. EvalAgent** — benchmarks the current model against all 23 PinchBench tasks. Writes per-task scores and a list of `weak_tasks` (tasks below `weak_task_threshold`) to state. Skips automatically if eval has already been run for the current model version — no redundant benchmarking.
 
-**Gates prevent wasted compute.** The loop pauses (exit code 3) and waits for human review if:
-- Analysis fails or produces an empty/error diagnosis — *training never starts without a real diagnosis*
-- Score regresses >5% below best ever
-- No improvement for 3 consecutive iterations
-- DataAgent generates 0 new examples
-- `train.jsonl` is empty after curation
+**2. EvalAnalysisAgent** — this is where Claude becomes the brain. It reads the scores from state, discovers all registered model versions in Ollama, and sends targeted probe prompts to each version to observe behavioral differences. It then asks Claude to form hypotheses, test them, and produce a structured diagnosis: root causes, affected tasks, and concrete data fixes. The diagnosis is written back to `state.last_analysis` and `state.failure_analysis` for the next agent to consume. This is not a script deciding "score < threshold → add data" — it is Claude reasoning about *why* the model fails.
 
-State is saved after every stage. Pod crashes mid-run? Resume with the same command — the loop picks up where it left off.
+**3. DataAgent** — reads `state.weak_tasks` and `state.failure_analysis` (the EvalAnalysisAgent's diagnosis) to decide what to generate. Calls `topup.py` which submits a batch job to the Claude Batch API, waits for completion, and writes new training examples to `train.jsonl`. The analysis output directly shapes what data gets created.
+
+**4. CuratorAgent** — every generated example goes through a quality gate before it can influence training. Runs `llm_judge.py` to score all examples 1–5 using Claude, then filters below `min_judge_score`. Writes updated `train.jsonl` and `val.jsonl`. This prevents low-quality synthetic data from silently degrading model performance.
+
+**5. TrainerAgent** — reads the curated dataset and runs the full training pipeline: prepare → finetune → convert → `fix_modelfile.sh`. Registers the result in Ollama as a versioned model (`qwen35-9b-clawd-v4`, etc.) and records it in `state.model_history`. Previous versions stay registered so EvalAnalysisAgent can probe and compare them in future iterations.
+
+**Gates block the loop before expensive stages.** Agents cannot proceed to training on bad inputs:
+- EvalAnalysisAgent failure or empty diagnosis → **PAUSE** *(training never starts without a real diagnosis)*
+- Score regression >5% below best ever → **PAUSE**
+- No improvement for 3 consecutive iterations → **PAUSE**
+- DataAgent generates 0 new examples → **PAUSE**
+- `train.jsonl` empty after curation → **PAUSE**
+
+State is saved after every stage. Pod crashes mid-run? Resume with the same command — the loop picks up where it left off. Each agent is also independently runnable (`python -m agents.eval_agent`, etc.) for debugging.
 
 ### Parallel to Karpathy's AutoResearch
 
 | Karpathy autoresearch | PinchBench Maxing |
 |---|---|
-| Agent modifies `train.py` | Agent generates targeted training data |
+| Single agent modifies `train.py` | Five specialized agents, each with one responsibility |
+| Agent modifies training code | Agents modify training *data* |
 | Fixed 5-min experiment budget | Full fine-tune per iteration |
 | Metric: val bits-per-byte | Metric: PinchBench score (0–23 tasks) |
 | Runs overnight on a single GPU | Runs overnight on a single GPU |
-| Agent reads eval output, iterates | Agent reads benchmark scores, diagnoses, iterates |
-| `program.md` guides the agent | EvalAnalysisAgent + Claude guide data decisions |
+| Agent reads eval output, iterates | EvalAnalysisAgent uses Claude to *reason* about why tasks fail |
+| `program.md` guides the agent | Shared `AgentState` coordinates agents; Claude provides diagnosis |
 
 ---
 
@@ -219,7 +226,7 @@ config.yaml                  # all settings — single source of truth
 loop.py                      # agentic loop orchestrator
 
 agents/
-  base.py                    # AgentState dataclass, Agent base class, TASK_IDS registry
+  base.py                    # AgentState (shared state between all agents), Agent base class, TASK_IDS registry
   eval_agent.py              # benchmarks current model, parses scores, identifies weak tasks
   eval_analysis_agent.py     # probes model versions via Ollama, diagnoses regressions with Claude
   data_agent.py              # calls topup.py for weak tasks, drives Claude Batch API
