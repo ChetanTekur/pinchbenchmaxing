@@ -667,4 +667,71 @@ git -C /root/pbm pull   # fix was shipped in a recent commit
 | `~/.openclaw/openclaw.json` | Generated OpenClaw config |
 | `/tmp/openclaw-gateway.log` | OpenClaw gateway logs (ephemeral) |
 | `/tmp/ollama.log` | Ollama logs (ephemeral) |
+
+---
+
+## Roadmap
+
+- **Apple Silicon support** — test and validate the full pipeline on Mac (M1/M2/M3/M4). Unsloth has experimental MPS support; the training stages use standard HuggingFace/TRL primitives.
+- **Multi-model support** — the pipeline currently targets Qwen3.5-9B. We want to make it easy to swap in other base models (Llama, Mistral, Phi, Gemma, etc.).
+- **Smarter data generation** — use EvalAnalysisAgent's diagnosis to not just topup weak tasks, but rewrite bad examples and generate adversarial variants.
+- **Parallel benchmarking** — run eval against multiple model versions simultaneously to speed up the loop.
+
+---
+
+## Contributing: Adding Support for Other Models
+
+The pipeline is designed around Qwen3.5-9B, but adding a new base model is straightforward. Here's what to change:
+
+### 1. `config.yaml` — point to the new model
+
+```yaml
+model:
+  base: mistralai/Mistral-7B-v0.3   # HuggingFace model ID
+  name: mistral-7b-clawd             # used for output dirs + Ollama model name
+```
+
+All derived paths (`adapter_dir`, `merged_dir`, `gguf_dir`, `gguf_file`) update automatically.
+
+### 2. `stages/finetune.py` — verify compatibility
+
+Unsloth supports a wide range of models (Llama, Mistral, Phi, Gemma, Qwen, etc.). The fine-tuning stage uses `FastLanguageModel.from_pretrained()` which handles most architectures automatically. You may need to adjust:
+
+- `max_seq_len` in `config.yaml` — some models support longer contexts
+- LoRA `target_modules` — Unsloth auto-detects these, but verify for your architecture
+- Chat template — Unsloth applies the model's native template; verify it produces correct `<tool_call>` formatting
+
+### 3. `scripts/register_model.sh` — update the Modelfile template
+
+This is the critical step. The current Modelfile template is Qwen3-specific (uses `<|im_start|>`/`<|im_end|>` tokens and a Qwen-specific `<tools>` block). For a different model family:
+
+1. Pull the base model in Ollama: `ollama pull mistral:7b`
+2. Export its Modelfile: `ollama show mistral:7b --modelfile`
+3. Verify it includes tool-call support (the `{{- if .Tools }}` template block)
+4. Update `register_model.sh` to use the new model's chat template instead of copying from `qwen3:8b`
+
+Without the correct Modelfile template, tool calling will silently fail and benchmark scores will be near zero.
+
+### 4. `openclaw_template.json` — update the default model reference
+
+The template uses `ollama/__MODEL_NAME__:latest` which is injected by `startup.sh`. No changes needed unless your model requires different inference parameters (temperature, top_k, etc.).
+
+### 5. Training data — the dataset is model-agnostic
+
+The synthetic training data (`train.jsonl`) uses a generic chat format with tool calls. `stages/prepare.py` converts it to the target model's SFT format using HuggingFace's chat template. The same dataset should work across model families — the SFT conversion handles the format differences.
+
+### What to validate
+
+After making these changes, run through the pipeline manually once before using the agentic loop:
+
+```bash
+python -m stages.finetune --dry-run   # verify model loads and config is valid
+python -m stages.finetune             # full training run
+python -m stages.convert              # GGUF conversion
+bash scripts/register_model.sh        # Ollama registration with correct template
+bash test_tool_call.sh                # verify tool calls are emitted
+bash scripts/benchmark_run.sh ollama/mistral-7b-clawd --no-upload  # sanity benchmark
+```
+
+If you get it working with a new model, please open a PR. We'd love to expand the set of supported architectures.
 | `/root/pbm/` | Project code (cloned by startup.sh) |
