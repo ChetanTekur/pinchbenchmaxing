@@ -17,6 +17,10 @@
 
 set -euo pipefail
 
+# Ensure utils/ is importable regardless of where the script is called from
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PYTHONPATH="${PYTHONPATH:-$SCRIPT_DIR/..}"
+
 # ── Derive paths from config ──────────────────────────────────────────────────
 GGUF_PATH="${GGUF_PATH:-$(python3 -c "from utils.config import load_config; print(load_config().gguf_file)")}"
 MODEL_NAME="${OLLAMA_MODEL:-$(python3 -c "from utils.config import load_config; print(load_config().ollama_model_name)")}"
