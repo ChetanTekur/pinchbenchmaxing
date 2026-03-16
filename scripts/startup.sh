@@ -167,9 +167,29 @@ for i in $(seq 1 60); do
     fi
 done
 
-# ── 5. Health summary ─────────────────────────────────────────────────────────
+# ── 5. Auto-register latest fine-tuned model ─────────────────────────────────
+# Reads current_ollama_model from loop_state.json and re-registers the GGUF.
+# Ollama's model registry (~/.ollama) is ephemeral; the GGUF is on the network volume.
 echo ""
-echo "=== [5/5] Health summary ==="
+echo "=== [5/6] Auto-registering fine-tuned model ==="
+STATE_FILE="$WORKSPACE/data/loop_state.json"
+if [ -f "$STATE_FILE" ]; then
+    CURRENT_MODEL=$(python3 -c "import json; d=json.load(open('$STATE_FILE')); print(d.get('current_ollama_model',''))" 2>/dev/null || true)
+    if [ -n "$CURRENT_MODEL" ]; then
+        echo "  Found model in loop state: $CURRENT_MODEL"
+        OLLAMA_MODEL="$CURRENT_MODEL" bash "$REPO_DIR/scripts/fix_modelfile.sh" \
+            && echo "  [OK] $CURRENT_MODEL registered" \
+            || echo "  [WARN] Registration failed — GGUF may not exist yet (first run?)"
+    else
+        echo "  No model in loop state yet — skipping (normal on first run)"
+    fi
+else
+    echo "  No loop_state.json found — skipping (normal on first run)"
+fi
+
+# ── 6. Health summary ─────────────────────────────────────────────────────────
+echo ""
+echo "=== [6/6] Health summary ==="
 
 if curl -sf http://127.0.0.1:11434/ > /dev/null 2>&1; then
     echo "  [OK] Ollama        http://127.0.0.1:11434"
@@ -191,5 +211,5 @@ echo "=== Startup complete ==="
 echo "  Logs: /tmp/ollama.log  |  /tmp/openclaw-gateway.log"
 echo ""
 echo "  Next steps:"
-echo "    bash scripts/fix_modelfile.sh"
-echo "    bash scripts/benchmark_run.sh ollama/<your-model>"
+echo "    cd /root/pbm"
+echo "    PYTHONPATH=. python3 loop.py run --model <ollama-model-name>"
