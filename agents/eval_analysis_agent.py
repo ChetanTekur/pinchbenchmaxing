@@ -327,7 +327,8 @@ class EvalAnalysisAgent(Agent):
 
     def _sig_benchmark_logs(self, cfg) -> dict:
         runs = []
-        for log_file in sorted(Path("/tmp").glob("bench_*.log"),
+        logs_dir = cfg.data_dir.parent / "logs"
+        for log_file in sorted(logs_dir.glob("bench_*.log"),
                                 key=lambda p: p.stat().st_mtime, reverse=True)[:5]:
             try:
                 text = log_file.read_text(errors="replace")
@@ -614,6 +615,52 @@ Return ONLY a valid JSON array with status field added:
     def _get_tools(self, names: list[str]) -> list[dict]:
         return [TOOLS_BY_NAME[n] for n in names if n in TOOLS_BY_NAME] or CLAWD_TOOLS
 
+    # ── JSON Extraction Helpers ───────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_json_object(text: str) -> dict | None:
+        """Robustly extract the outermost JSON object from a Claude response."""
+        # 1. Strip markdown code fences
+        text = re.sub(r'^```(?:json)?\s*', '', text.strip(), flags=re.MULTILINE)
+        text = re.sub(r'\s*```$', '', text.strip(), flags=re.MULTILINE)
+        text = text.strip()
+
+        # 2. Try direct parse first (clean responses)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # 3. Find outermost {} by tracking brace depth
+        start = text.find('{')
+        if start == -1:
+            return None
+        depth = 0
+        in_str = False
+        escape = False
+        for i, ch in enumerate(text[start:], start):
+            if escape:
+                escape = False
+                continue
+            if ch == '\\' and in_str:
+                escape = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start:i + 1])
+                    except json.JSONDecodeError:
+                        return None
+        return None
+
     # ── Final Diagnosis ───────────────────────────────────────────────────────
 
     def _final_diagnosis(self, client, signals, state, hypotheses, probes) -> dict:
@@ -656,12 +703,10 @@ Produce an actionable diagnosis. Return ONLY valid JSON:
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = resp.content[0].text.strip()
-            m = re.search(r'\{.*\}', raw, re.DOTALL)
-            diag = json.loads(m.group()) if m else {"summary": raw,
-                                                     "root_causes": [],
-                                                     "data_fixes": [],
-                                                     "training_changes": [],
-                                                     "v_next_watchpoints": []}
+            diag = self._extract_json_object(raw)
+            if diag is None:
+                diag = {"summary": raw, "root_causes": [], "data_fixes": [],
+                        "training_changes": [], "v_next_watchpoints": []}
         except Exception as e:
             diag = {"summary": f"Error: {e}", "root_causes": [], "data_fixes": [],
                     "training_changes": [], "v_next_watchpoints": []}
