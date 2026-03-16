@@ -52,7 +52,7 @@ RUN curl -fsSL https://ollama.com/install.sh | sh
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
-RUN npm install -g openclaw@latest
+RUN npm install -g openclaw@latest && openclaw --version
 
 # ── Bootstrap scripts only (code is cloned by startup.sh at runtime) ─────────
 # The full repo is cloned to /root/pbm on first start, then git pull on restarts.
