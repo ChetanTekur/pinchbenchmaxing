@@ -104,7 +104,7 @@ if [ -z "$BRAVE_KEY" ]; then
 fi
 
 GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-$(openssl rand -hex 24)}"
-MODEL_NAME=$(cd "$REPO_DIR" && python3 -c "from utils.config import load_config; print(load_config().ollama_model_name)" 2>/dev/null || echo "qwen35-9b-clawd")
+MODEL_NAME=$(cd "$REPO_DIR" && PYTHONPATH="$REPO_DIR" python3 -c "from utils.config import load_config; print(load_config().ollama_model_name)" 2>/dev/null || echo "qwen35-9b-clawd")
 
 sed \
     -e "s|__OPENROUTER_API_KEY__|$OPENROUTER_KEY|g" \

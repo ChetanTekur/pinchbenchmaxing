@@ -22,7 +22,9 @@ set -euo pipefail
 
 export PATH="$HOME/.local/bin:$HOME/.openclaw/bin:/usr/local/bin:$PATH"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export PYTHONPATH="${PYTHONPATH:-$SCRIPT_DIR/..}"
+PROJECT_ROOT="$SCRIPT_DIR/.."
+cd "$PROJECT_ROOT"
+export PYTHONPATH="$PROJECT_ROOT"
 
 WORKSPACE="${PBM_WORKSPACE:-./workspace}"
 BENCH_DIR="$WORKSPACE/skill"
