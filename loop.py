@@ -197,7 +197,14 @@ def cmd_run(args, cfg) -> None:
     # ── Seed model version if running a named model ───────────────────────────
     if args.model and not state.current_ollama_model:
         state.current_ollama_model = args.model
-        print(f"[orchestrator] Set current model to: {args.model}")
+        # Parse version number from name (e.g. qwen35-9b-clawd-v3 → 3)
+        # so TrainerAgent increments correctly (v3 → v4, not v0 → v1)
+        m = re.search(r'-v(\d+)$', args.model)
+        if m:
+            state.model_version = int(m.group(1))
+            print(f"[orchestrator] Set current model to: {args.model} (version {state.model_version})")
+        else:
+            print(f"[orchestrator] Set current model to: {args.model}")
 
     max_iter  = cfg.loop.max_iterations
     target    = cfg.loop.target_score
