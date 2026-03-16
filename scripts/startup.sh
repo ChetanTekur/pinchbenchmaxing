@@ -24,15 +24,15 @@ REPO_DIR="/root/pbm"
 REPO_URL="https://github.com/ChetanTekur/pinchbenchmaxing.git"
 ENV_FILE="/workspace/synthbench/set_env.sh"
 
-# Always export PBM_WORKSPACE so all subprocesses and future shells see it
-export PBM_WORKSPACE="/workspace/synthbench"
+# PBM_WORKSPACE comes from Dockerfile ENV; default here is only a fallback
+export PBM_WORKSPACE="${PBM_WORKSPACE:-/workspace/synthbench}"
 WORKSPACE="$PBM_WORKSPACE"
 
 # Write key env vars to ~/.bashrc so SSH sessions inherit them automatically
-grep -qxF 'export PBM_WORKSPACE=/workspace/synthbench' ~/.bashrc 2>/dev/null \
-    || echo 'export PBM_WORKSPACE=/workspace/synthbench' >> ~/.bashrc
-grep -qxF 'export PYTHONPATH=/root/pbm' ~/.bashrc 2>/dev/null \
-    || echo 'export PYTHONPATH=/root/pbm' >> ~/.bashrc
+grep -qxF "export PBM_WORKSPACE=$PBM_WORKSPACE" ~/.bashrc 2>/dev/null \
+    || echo "export PBM_WORKSPACE=$PBM_WORKSPACE" >> ~/.bashrc
+grep -qxF "export PYTHONPATH=$REPO_DIR" ~/.bashrc 2>/dev/null \
+    || echo "export PYTHONPATH=$REPO_DIR" >> ~/.bashrc
 grep -qxF 'export PATH="$HOME/.local/bin:$HOME/.openclaw/bin:/usr/local/bin:$PATH"' ~/.bashrc 2>/dev/null \
     || echo 'export PATH="$HOME/.local/bin:$HOME/.openclaw/bin:/usr/local/bin:$PATH"' >> ~/.bashrc
 
