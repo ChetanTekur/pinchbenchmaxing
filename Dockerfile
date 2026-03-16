@@ -44,8 +44,13 @@ ENV PATH="/root/.local/bin:${PATH}"
 RUN pip install --no-cache-dir \
     "unsloth[cu124-torch260] @ git+https://github.com/unslothai/unsloth.git"
 
-# ── llama.cpp (pre-install so convert.py doesn't wait 3 min at runtime) ──────
-RUN python -c "from unsloth.save import install_llama_cpp_blocking; install_llama_cpp_blocking()"
+# ── llama.cpp build dependencies (so convert.py doesn't apt-get at runtime) ──
+# NOTE: install_llama_cpp_blocking() requires a GPU at import time (Unsloth checks
+# for CUDA), so we can't pre-compile llama.cpp in CI. Instead we ensure the build
+# deps are present so the first convert run only compiles, no apt-get needed.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        cmake \
+    && rm -rf /var/lib/apt/lists/*
 
 # ── Ollama ────────────────────────────────────────────────────────────────────
 RUN curl -fsSL https://ollama.com/install.sh | sh
