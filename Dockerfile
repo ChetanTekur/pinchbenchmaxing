@@ -32,6 +32,7 @@ RUN pip install --no-cache-dir \
         openpyxl \
         pdfplumber \
         PyPDF2 \
+        scikit-learn \
         jupyter \
         ipywidgets
 

@@ -1,17 +1,19 @@
 """
-DataAgent — generates synthetic training data for tasks below target count.
+DataAgent — generates targeted training data using diagnosis from EvalAnalysisAgent.
 
-Delegates all deficit logic to topup.py:
-- topup.py computes which tasks need more examples (data count vs target)
-- topup.py uses per-task EPC (1 for hard tasks, 3 for normal)
-- topup.py submits to Claude Batch API and collects results
+Three generation strategies, selected per-task based on the diagnosis:
 
-DataAgent's future role:
-- Consume failure_analysis from EvalAgent to generate *targeted* examples
-  (e.g. inject specific failure patterns into the meta-prompt)
-- Adjust example style based on what the model is getting wrong
+1. Targeted topup (default) — diagnosis-aware meta-prompts with weighted variations
+2. Adversarial generation — for tasks that scored 0, generates from benchmark transcripts
+3. Plain topup (fallback) — round-robin when no diagnosis is available
+
+The diagnosis flows from EvalAnalysisAgent → state.last_analysis → data_agent →
+current_diagnosis.json → targeted_topup.py → meta-prompt. This closes the feedback
+loop: benchmark failures directly shape what training data gets generated.
 """
 
+import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -22,13 +24,6 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 
 
 class DataAgent(Agent):
-    """
-    Generates synthetic training data to fill gaps in the dataset.
-
-    Reads weak_tasks and failure_analysis from state (set by EvalAgent)
-    but delegates the actual deficit calculation to topup.py, which
-    counts existing examples and computes gaps against the target.
-    """
     name = "data"
 
     def run(self, state: AgentState, cfg) -> AgentState:
@@ -36,23 +31,123 @@ class DataAgent(Agent):
             self.log("No weak tasks — skipping data generation.")
             return state
 
-        self.log(f"Weak tasks to address: {state.weak_tasks}")
+        self.log(f"Weak tasks ({len(state.weak_tasks)}): {state.weak_tasks}")
 
-        if state.failure_analysis:
-            self.log("Failure context available (used in future targeted generation):")
-            for task, note in state.failure_analysis.items():
-                self.log(f"  {task}: {note}")
+        # ── Build per-task diagnosis from EvalAnalysisAgent output ──────────
+        diagnosis = self._build_per_task_diagnosis(state)
+        diag_file = cfg.data_dir / "current_diagnosis.json"
+        diag_file.parent.mkdir(parents=True, exist_ok=True)
+        diag_file.write_text(json.dumps(diagnosis, indent=2))
 
-        self.log("Running topup (deficit auto-computed from data counts)...")
-        topup = str(_PROJECT_ROOT / "topup.py")
-        rc = self.run_cmd([sys.executable, topup, "run"], check=False)
+        if diagnosis:
+            self.log(f"Diagnosis covers {len(diagnosis)} tasks:")
+            for task, d in sorted(diagnosis.items()):
+                cause = d.get("root_cause", "")[:80]
+                action = d.get("data_action", "topup")
+                self.log(f"  {task}: [{action}] {cause}")
+        else:
+            self.log("No diagnosis available — falling back to plain topup")
 
-        if rc == 2:
-            self.log("All tasks already at target — no new data needed.")
-        elif rc != 0:
-            raise subprocess.CalledProcessError(rc, ["topup.py", "run"])
+        # ── Classify tasks by generation strategy ──────────────────────────
+        tasks_topup = []
+        tasks_adversarial = []
+
+        for task in state.weak_tasks:
+            strategy = self._select_strategy(task, state, cfg)
+            if strategy == "adversarial":
+                tasks_adversarial.append(task)
+            else:
+                tasks_topup.append(task)
+
+        # ── Execute strategies ─────────────────────────────────────────────
+
+        # Strategy 1: Targeted topup (diagnosis-aware)
+        if tasks_topup:
+            self.log(f"\n[TARGETED TOPUP] {len(tasks_topup)} tasks")
+            script = str(_PROJECT_ROOT / "targeted_topup.py")
+            rc = self.run_cmd(
+                [sys.executable, script, "run",
+                 "--diagnosis-file", str(diag_file),
+                 "--tasks", ",".join(tasks_topup)],
+                check=False,
+            )
+            if rc == 2:
+                self.log("All topup tasks already at target count.")
+            elif rc != 0:
+                raise subprocess.CalledProcessError(rc, ["targeted_topup.py"])
+
+        # Strategy 2: Adversarial generation from benchmark transcripts
+        if tasks_adversarial:
+            self.log(f"\n[ADVERSARIAL] {len(tasks_adversarial)} tasks")
+            log_dir = cfg.data_dir.parent / "logs"
+            script = str(_PROJECT_ROOT / "adversarial_gen.py")
+
+            n_per_task = cfg.get("data", {})
+            if hasattr(n_per_task, "get"):
+                n_per_task = n_per_task.get("adversarial_examples_per_task", 3)
+            else:
+                n_per_task = 3
+
+            rc = self.run_cmd(
+                [sys.executable, script, "run",
+                 "--log-dir", str(log_dir),
+                 "--tasks", ",".join(tasks_adversarial),
+                 "--n-per-task", str(n_per_task)],
+                check=False,
+            )
+            if rc != 0:
+                self.log(f"WARNING: adversarial generation exited {rc} (non-fatal)")
 
         return state
+
+    # ── Helpers ────────────────────────────────────────────────────────────
+
+    def _build_per_task_diagnosis(self, state: AgentState) -> dict:
+        """Merge EvalAnalysisAgent's root_causes + data_fixes into per-task dict."""
+        result = {}
+        analysis = state.last_analysis or {}
+
+        # From root_causes
+        for rc in analysis.get("root_causes", []):
+            for task in rc.get("affected_tasks", []):
+                result.setdefault(task, {})
+                result[task]["root_cause"] = rc.get("cause", "")
+                result[task]["fix"] = rc.get("fix", "")
+                result[task]["confidence"] = rc.get("confidence", "low")
+
+        # From data_fixes
+        for df in analysis.get("data_fixes", []):
+            task = df.get("task", "")
+            if task:
+                result.setdefault(task, {})
+                result[task]["data_action"] = df.get("action", "topup")
+                result[task]["priority"] = df.get("priority", "medium")
+                result[task]["reason"] = df.get("reason", "")
+
+        # From failure_analysis (simpler per-task notes from EvalAgent)
+        for task, note in state.failure_analysis.items():
+            result.setdefault(task, {})
+            result[task].setdefault("root_cause", note)
+
+        return result
+
+    def _select_strategy(self, task: str, state: AgentState, cfg) -> str:
+        """Pick generation strategy for a task based on score + diagnosis."""
+        analysis = state.last_analysis or {}
+
+        # Check if diagnosis says to regenerate
+        for df in analysis.get("data_fixes", []):
+            if df.get("task") == task and df.get("action") in ("regenerate", "delete"):
+                return "adversarial"  # regenerate = adversarial (learn from failure)
+
+        # Tasks that scored 0 benefit most from adversarial generation
+        score = state.scores.get(task, 0.0)
+        if score == 0.0:
+            log_dir = cfg.data_dir.parent / "logs"
+            if log_dir.exists() and any(log_dir.glob("bench_*.log")):
+                return "adversarial"
+
+        return "topup"
 
 
 # ── Standalone entry point ────────────────────────────────────────────────────

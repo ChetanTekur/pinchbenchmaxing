@@ -44,9 +44,17 @@ Each agent has one job. They hand off through `AgentState`:
 
 **2. EvalAnalysisAgent** — this is where Claude becomes the brain. It reads the scores from state, discovers all registered model versions in Ollama, and sends targeted probe prompts to each version to observe behavioral differences. It then asks Claude to form hypotheses, test them, and produce a structured diagnosis: root causes, affected tasks, and concrete data fixes. The diagnosis is written back to `state.last_analysis` and `state.failure_analysis` for the next agent to consume. This is not a script deciding "score < threshold → add data" — it is Claude reasoning about *why* the model fails.
 
-**3. DataAgent** — reads `state.weak_tasks` and `state.failure_analysis` (the EvalAnalysisAgent's diagnosis) to decide what to generate. Calls `topup.py` which submits a batch job to the Claude Batch API, waits for completion, and writes new training examples to `train.jsonl`. The analysis output directly shapes what data gets created.
+**3. DataAgent** — reads `state.weak_tasks` and `state.failure_analysis` to decide what to generate *and how*. For each weak task, it selects one of three strategies:
+- **Targeted topup** (default) — writes the diagnosis to `current_diagnosis.json`, passes it to `targeted_topup.py`. The meta-prompt includes the root cause and fix recommendation. Variation types (error_recovery, multi_tool_chain, etc.) are weighted based on failure patterns — not round-robin.
+- **Adversarial generation** — for tasks that scored 0.0 (complete failure). Parses the model's actual benchmark transcript to see what it did wrong, then generates examples showing the correct approach to that exact scenario. Uses real-time Claude API since volume is low (~3 examples per failed task).
+- **Plain topup** (fallback) — original round-robin when no diagnosis is available.
 
-**4. CuratorAgent** — every generated example goes through a quality gate before it can influence training. Runs `llm_judge.py` to score all examples 1–5 using Claude, then filters below `min_judge_score`. Writes updated `train.jsonl` and `val.jsonl`. This prevents low-quality synthetic data from silently degrading model performance.
+**4. CuratorAgent** — five-stage quality pipeline:
+1. **Score** all examples via LLM judge (1–5 scale)
+2. **Repair** borderline examples (score 2–3) — sends them to Claude with the judge's feedback to fix specific issues while preserving structure, then re-scores. Only keeps repairs that actually improved.
+3. **Filter** below `min_judge_score` — removes the rest
+4. **Deduplicate** — TF-IDF cosine similarity on user messages + Jaccard similarity on tool calls. Removes near-identical examples, keeping the highest-scored from each cluster.
+5. **Verify** train.jsonl is non-empty
 
 **5. TrainerAgent** — reads the curated dataset and runs the full training pipeline: prepare → finetune → convert → `register_model.sh`. Registers the result in Ollama as a versioned model (`qwen35-9b-clawd-v4`, etc.) and records it in `state.model_history`. Previous versions stay registered so EvalAnalysisAgent can probe and compare them in future iterations.
 
@@ -251,9 +259,13 @@ utils/
   config.py                  # loads config.yaml, computes all derived paths
   prompts.py                 # shared constants: OPENCLAW_SYSTEM prompt, VALID_TOOLS
 
-generate.py                  # generate synthetic training data via Claude Batch API
+generate.py                  # generate initial synthetic training data via Claude Batch API
 llm_judge.py                 # score examples 1–5 with Claude, filter at --min 3
-topup.py                     # fill per-task gaps to target example count
+topup.py                     # fill per-task gaps (plain round-robin, used as fallback)
+targeted_topup.py            # diagnosis-aware generation — weighted variations, injected context
+adversarial_gen.py           # generate from benchmark failure transcripts
+example_repair.py            # repair borderline examples (score 2-3) instead of discarding
+dedup.py                     # semantic deduplication (TF-IDF + tool Jaccard similarity)
 inspect_data.py              # dataset stats, validation, sampling
 test_tool_call.sh            # verify fine-tuned model emits proper <tool_call> blocks
 openclaw_template.json       # OpenClaw config template (secrets injected by startup.sh)
