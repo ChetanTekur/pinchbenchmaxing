@@ -65,7 +65,7 @@ class EvalAgent(Agent):
         script = Path(__file__).parent.parent / "scripts" / "benchmark_run.sh"
         self.run_cmd(["bash", str(script), ollama_model])
         safe_name = ollama_model.replace("/", "_").replace(":", "_")
-        log_file  = Path(f"/tmp/bench_{safe_name}.log")
+        log_file  = cfg.data_dir.parent / "logs" / f"bench_{safe_name}.log"
         if not log_file.exists():
             raise RuntimeError(f"Benchmark log not found at {log_file}")
         return log_file

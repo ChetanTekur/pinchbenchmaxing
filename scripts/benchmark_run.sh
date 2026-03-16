@@ -42,7 +42,9 @@ NO_UPLOAD=""
 
 # Derive a filesystem-safe name for log files (replace / : with _)
 SAFE_NAME=$(echo "$MODEL" | tr '/: ' '___')
-LOG_FILE="/tmp/bench_${SAFE_NAME}.log"
+LOG_DIR="${PBM_WORKSPACE:-/workspace/synthbench}/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/bench_${SAFE_NAME}.log"
 
 echo "=== PinchBench Run ==="
 echo "  Model:    $MODEL"
