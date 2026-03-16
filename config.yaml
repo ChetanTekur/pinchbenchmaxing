@@ -35,6 +35,13 @@ training:
 convert:
   quantization: q4_k_m        # q4_k_m (default), q8_0 (higher quality), f16 (no quant)
 
+# Claude models used for data generation, judging, and analysis
+# Override these to use different models (e.g. claude-opus-4-5 for higher quality)
+claude:
+  generation: claude-sonnet-4-5   # generate.py, topup.py — synthetic data generation
+  judge: claude-sonnet-4-5        # llm_judge.py — quality scoring
+  analysis: claude-sonnet-4-6     # eval_analysis_agent.py — failure diagnosis
+
 loop:
   max_iterations: 2           # increase after verifying the loop works correctly
   target_score: 0.85          # stop when benchmark score exceeds this

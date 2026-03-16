@@ -14,18 +14,11 @@ import json, random, re, argparse, sys
 from pathlib import Path
 from collections import defaultdict
 from utils.config import load_config
+from utils.prompts import VALID_TOOLS
 
 _cfg       = load_config()
 TRAIN_FILE = _cfg.train_file
 VAL_FILE   = _cfg.val_file
-
-VALID_TOOLS = {
-    "read_file", "write_file", "create_directory", "list_files",
-    "run_bash", "run_python", "web_search", "fetch_url",
-    "create_calendar_event", "draft_email", "search_emails", "read_email",
-    "generate_image", "read_memory", "write_memory",
-    "search_skills", "install_skill",
-}
 
 # Tasks that MUST contain a tool call (not pure text responses)
 TOOL_REQUIRED_TASKS = {

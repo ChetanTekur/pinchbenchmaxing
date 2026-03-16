@@ -21,3 +21,5 @@ __pycache__/
 
 # Mac
 .DS_Store
+openclaw-gateway.log
+openclaw.json

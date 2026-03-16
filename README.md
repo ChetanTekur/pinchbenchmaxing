@@ -189,6 +189,11 @@ training:
 convert:
   quantization: q4_k_m         # q4_k_m (default), q8_0, f16
 
+claude:
+  generation: claude-sonnet-4-5   # model for synthetic data generation
+  judge: claude-sonnet-4-5        # model for quality scoring
+  analysis: claude-sonnet-4-6     # model for failure diagnosis
+
 loop:
   max_iterations: 2            # start low, verify end-to-end, then increase
   target_score: 0.85           # loop exits when benchmark avg exceeds this
@@ -244,11 +249,11 @@ scripts/
 
 utils/
   config.py                  # loads config.yaml, computes all derived paths
+  prompts.py                 # shared constants: OPENCLAW_SYSTEM prompt, VALID_TOOLS
 
 generate.py                  # generate synthetic training data via Claude Batch API
 llm_judge.py                 # score examples 1–5 with Claude, filter at --min 3
 topup.py                     # fill per-task gaps to target example count
-repair.py                    # fix JSON parse failures in raw generated data
 inspect_data.py              # dataset stats, validation, sampling
 test_tool_call.sh            # verify fine-tuned model emits proper <tool_call> blocks
 openclaw_template.json       # OpenClaw config template (secrets injected by startup.sh)

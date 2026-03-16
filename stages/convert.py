@@ -2,15 +2,14 @@
 """
 Convert merged fine-tuned model to GGUF for Ollama.
 
-The GGUF file is written to <workspace>/models/<name>_gguf/<name>.<QUANT>.gguf
+The GGUF file is written to <workspace>/<name>_merged_gguf/<name>_merged.<QUANT>.gguf
 
 Usage:
-  python stages/convert.py
-  python stages/convert.py --config /path/to/config.yaml
-  python stages/convert.py --quant q8_0
+  python -m stages.convert
+  python -m stages.convert --quant q8_0
 
 After this runs, register with Ollama:
-  python stages/register.py
+  bash scripts/register_model.sh
 """
 
 import argparse
@@ -31,7 +30,8 @@ def main():
     quant       = args.quant or cfg["convert"]["quantization"]
     merged_path = Path(args.merged) if args.merged else cfg.merged_dir
     gguf_dir    = cfg.gguf_dir
-    gguf_file   = cfg.gguf_dir / f"{cfg.model_name}.{quant.upper()}.gguf"
+    # Build gguf_file using the effective quant (which may be overridden via --quant)
+    gguf_file   = gguf_dir / f"{cfg.model_name}_merged.{quant.upper()}.gguf"
 
     if not merged_path.exists():
         raise FileNotFoundError(

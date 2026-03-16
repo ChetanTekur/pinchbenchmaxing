@@ -33,7 +33,7 @@ from utils.config import load_config as _load_config
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 OLLAMA_URL     = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
-ANALYSIS_MODEL = "claude-sonnet-4-6"
+ANALYSIS_MODEL = None  # set from config in run()
 MAX_ROUNDS     = 2
 PROBE_TIMEOUT  = 90
 
@@ -107,6 +107,9 @@ class EvalAnalysisAgent(Agent):
     name = "eval_analysis"
 
     def run(self, state: AgentState, cfg) -> AgentState:
+        global ANALYSIS_MODEL
+        ANALYSIS_MODEL = cfg.claude.analysis
+
         parser = argparse.ArgumentParser(add_help=False)
         parser.add_argument("--rounds", type=int, default=MAX_ROUNDS)
         args, _ = parser.parse_known_args()

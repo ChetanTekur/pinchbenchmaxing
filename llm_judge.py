@@ -24,8 +24,8 @@ TRAIN_FILE  = _cfg.train_file
 VAL_FILE    = _cfg.val_file
 SCORES_FILE = _cfg.data_dir / "scores.json"
 
-JUDGE_MODEL = "claude-sonnet-4-5"
-MIN_SCORE   = 3   # default threshold (out of 5)
+JUDGE_MODEL = _cfg.claude.judge
+MIN_SCORE   = _cfg.data.min_judge_score
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TASK GRADING CRITERIA  (same as in generate.py — used as judge rubric)

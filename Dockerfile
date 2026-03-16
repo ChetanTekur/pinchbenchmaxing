@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir \
         pyyaml \
         anthropic \
+        httpx \
         trl \
         transformers \
         peft \
