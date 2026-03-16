@@ -515,13 +515,19 @@ PYTHONPATH=. python3 loop.py status
 The loop pauses (exit code 3) and requires human review when:
 - Score drops >5% below the best version ever achieved (regression detected)
 - No improvement for 3 consecutive iterations
+- **EvalAnalysisAgent fails or produces a deficient diagnosis** — see gate details below
 - DataAgent generates 0 new examples (all tasks already at target)
 - `train.jsonl` is empty after curation
 - TrainerAgent fails to produce a verified Ollama model
 
 Hard failures (eval parse error, training crash, GGUF not found) exit with code 1 and print the error. Fix the issue and re-run — state is saved so you don't lose progress.
 
-EvalAnalysisAgent failures are **non-fatal** — the loop logs a warning and continues. This is intentional: the analysis is a refinement that informs data generation, but it's not required for the loop to make progress.
+**Training is gated on a valid analysis.** Fine-tuning is expensive — the loop will not reach DataAgent or TrainerAgent unless `state.last_analysis` passes all of these checks:
+1. Non-empty (agent produced output)
+2. `summary` does not start with `"Error:"` (diagnosis itself did not error)
+3. At least one of `root_causes` or `data_fixes` is non-empty (actionable content exists)
+
+If any check fails, the loop pauses with a clear message. Fix the underlying issue (check `eval_analysis_*.json` in the data dir), then resume normally.
 
 ### Iteration flow in detail
 
@@ -533,6 +539,8 @@ EvalAnalysisAgent failures are **non-fatal** — the loop logs a warning and con
 3. **Target gate** — if avg score ≥ `target_score`, loop exits successfully.
 
 4. **EvalAnalysisAgent** — discovers all registered model versions in Ollama, sends targeted prompts to each to observe behavioral differences, asks Claude to hypothesize root causes. Writes a diagnosis JSON to `$PBM_WORKSPACE/data/eval_analysis_*.json`. Populates `state.failure_analysis` for DataAgent.
+
+4b. **Analysis gate** — pauses if: agent threw an exception, `last_analysis` is empty, summary starts with `"Error:"`, or both `root_causes` and `data_fixes` are empty. Training does not proceed without a real diagnosis.
 
 5. **DataAgent** — calls `topup.py` for each task in `state.weak_tasks`, targeting `examples_per_weak_task` new examples per task. Waits for Claude Batch API, collects results.
 
@@ -664,9 +672,11 @@ Or set it persistently: the `startup.sh` writes `export PYTHONPATH=/root/pbm` to
 
 TrainerAgent increments `state.model_version` by 1 each run. If you start the loop with `--model qwen35-9b-clawd-v3`, the loop parses `-v3` and sets `state.model_version = 3` so the next fine-tune becomes v4. If you don't pass `--model`, the loop starts from version 0 and will create v1 — even if v3 already exists.
 
-### 8. EvalAnalysisAgent failures are non-fatal by design
+### 8. Training is gated on a valid analysis — analysis failures pause the loop
 
-The loop treats analysis errors as warnings and continues to DataAgent. This is intentional — the analysis adds quality to data decisions but the pipeline can still make progress without it. If analysis keeps failing, fix the issue but don't worry about re-running the loop from scratch.
+EvalAnalysisAgent failures (exception, empty output, error summary, or no actionable findings) trigger a pause before DataAgent runs. The loop will not proceed to data generation or training without a real diagnosis.
+
+This is intentional cost control: fine-tuning on the wrong data wastes ~$10–30 in GPU time. Fix the analysis error, then resume with `PYTHONPATH=. python3 loop.py run --model <current-model>`. The loop picks up from where it left off.
 
 ### 9. Benchmark logs are saved to the network volume
 
