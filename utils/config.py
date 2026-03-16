@@ -80,10 +80,6 @@ class Config:
         return self.workspace / "data"
 
     @property
-    def models_dir(self) -> Path:
-        return self.workspace / "models"
-
-    @property
     def model_name(self) -> str:
         return self._data["model"]["name"]
 
@@ -93,20 +89,20 @@ class Config:
 
     @property
     def adapter_dir(self) -> Path:
-        return self.models_dir / self.model_name
+        return self.workspace / self.model_name
 
     @property
     def merged_dir(self) -> Path:
-        return self.models_dir / f"{self.model_name}_merged"
+        return self.workspace / f"{self.model_name}_merged"
 
     @property
     def gguf_dir(self) -> Path:
-        return self.models_dir / f"{self.model_name}_gguf"
+        return self.workspace / f"{self.model_name}_merged_gguf"
 
     @property
     def gguf_file(self) -> Path:
         quant = self._data["convert"]["quantization"].upper()
-        return self.gguf_dir / f"{self.model_name}.{quant}.gguf"
+        return self.gguf_dir / f"{self.model_name}_merged.{quant}.gguf"
 
     @property
     def ollama_model_name(self) -> str:
