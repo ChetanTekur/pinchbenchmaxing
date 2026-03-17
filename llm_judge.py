@@ -258,8 +258,16 @@ def cmd_run():
     existing = {}
     if SCORES_FILE.exists():
         existing = json.loads(SCORES_FILE.read_text())
-        print(f"Resuming — {len(existing)} scores already saved, "
-              f"{len(records)-len(existing)} remaining")
+        # Count how many current records still need scoring
+        already_scored = 0
+        for rec in records:
+            user_msgs = [m for m in rec.get("messages", []) if m["role"] == "user"]
+            key = rec.get("task_id", "?") + "|" + (user_msgs[0]["content"][:80] if user_msgs else "")
+            if key in existing:
+                already_scored += 1
+        need_scoring = len(records) - already_scored
+        print(f"Resuming — {already_scored}/{len(records)} already scored, "
+              f"{need_scoring} new examples to judge")
 
     scores = dict(existing)
     errors = 0
