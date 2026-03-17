@@ -220,7 +220,8 @@ Return ONLY a valid JSON array of {epc} objects. No markdown, no preamble.
 # COMMANDS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def cmd_submit(diagnosis_file: str | None = None, only_tasks: list | None = None):
+def cmd_submit(diagnosis_file: str | None = None, only_tasks: list | None = None,
+               min_per_task: int = 0):
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         print("ERROR: ANTHROPIC_API_KEY not set")
@@ -235,6 +236,15 @@ def cmd_submit(diagnosis_file: str | None = None, only_tasks: list | None = None
         print(f"  Loaded diagnosis for {len(diagnosis)} tasks")
 
     deficits = compute_deficits(only_tasks=only_tasks)
+
+    # For weak tasks, ensure at least min_per_task new examples even if
+    # the task is already at the count target. A task can have 70 examples
+    # and still score 0% — it needs BETTER data, not just more.
+    if min_per_task > 0 and only_tasks:
+        for task_id in only_tasks:
+            if task_id in TASKS:
+                deficits[task_id] = max(deficits.get(task_id, 0), min_per_task)
+
     if not deficits:
         print("All tasks are at or above target. Nothing to do.")
         sys.exit(0)
@@ -363,9 +373,11 @@ def cmd_collect():
     print(f"  New val:   {total_val}")
 
 
-def cmd_run(diagnosis_file: str | None = None, only_tasks: list | None = None):
+def cmd_run(diagnosis_file: str | None = None, only_tasks: list | None = None,
+            min_per_task: int = 0):
     """Submit → poll → collect in one shot."""
-    cmd_submit(diagnosis_file=diagnosis_file, only_tasks=only_tasks)
+    cmd_submit(diagnosis_file=diagnosis_file, only_tasks=only_tasks,
+               min_per_task=min_per_task)
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     client  = anthropic.Anthropic(api_key=api_key)
@@ -398,21 +410,26 @@ def main():
     run_p.add_argument("--diagnosis-file", type=str, default=None)
     run_p.add_argument("--tasks", type=str, default=None,
                        help="Comma-separated task IDs to target")
+    run_p.add_argument("--min-per-task", type=int, default=0,
+                       help="Minimum new examples per task (overrides deficit calculation)")
 
     sub.add_parser("count", help="Show current vs target per task")
 
     submit_p = sub.add_parser("submit", help="Submit batch")
     submit_p.add_argument("--diagnosis-file", type=str, default=None)
     submit_p.add_argument("--tasks", type=str, default=None)
+    submit_p.add_argument("--min-per-task", type=int, default=0)
 
     sub.add_parser("status", help="Check batch status")
     sub.add_parser("collect", help="Collect results")
 
     args = parser.parse_args()
     only_tasks = args.tasks.split(",") if hasattr(args, "tasks") and args.tasks else None
+    min_per_task = getattr(args, "min_per_task", 0)
 
     if args.command == "run":
-        cmd_run(diagnosis_file=args.diagnosis_file, only_tasks=only_tasks)
+        cmd_run(diagnosis_file=args.diagnosis_file, only_tasks=only_tasks,
+                min_per_task=min_per_task)
     elif args.command == "count":
         cmd_count()
     elif args.command == "submit":

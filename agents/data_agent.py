@@ -63,12 +63,15 @@ class DataAgent(Agent):
 
         # Strategy 1: Targeted topup (diagnosis-aware)
         if tasks_topup:
-            self.log(f"\n[TARGETED TOPUP] {len(tasks_topup)} tasks")
+            min_per_task = cfg.loop.examples_per_weak_task
+            self.log(f"\n[TARGETED TOPUP] {len(tasks_topup)} tasks "
+                     f"(min {min_per_task} new examples each)")
             script = str(_PROJECT_ROOT / "targeted_topup.py")
             rc = self.run_cmd(
                 [sys.executable, script, "run",
                  "--diagnosis-file", str(diag_file),
-                 "--tasks", ",".join(tasks_topup)],
+                 "--tasks", ",".join(tasks_topup),
+                 "--min-per-task", str(min_per_task)],
                 check=False,
             )
             if rc == 2:
