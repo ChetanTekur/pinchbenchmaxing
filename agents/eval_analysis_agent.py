@@ -109,6 +109,7 @@ class EvalAnalysisAgent(Agent):
     def run(self, state: AgentState, cfg) -> AgentState:
         global ANALYSIS_MODEL
         ANALYSIS_MODEL = cfg.claude.analysis
+        self._cfg = cfg  # store for _save_raw access in nested methods
 
         parser = argparse.ArgumentParser(add_help=False)
         parser.add_argument("--rounds", type=int, default=MAX_ROUNDS)
@@ -378,9 +379,10 @@ class EvalAnalysisAgent(Agent):
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = resp.content[0].text.strip()
+            self._save_raw("hypotheses", raw, getattr(self, '_cfg', None))
             hyps = self._extract_json_array(raw)
             if not hyps:
-                self.log(f"Could not parse hypotheses: {raw[:200]}")
+                self.log(f"Could not parse hypotheses (raw saved to data/debug/)")
                 return prev
             self.log(f"  {len(hyps)} hypotheses generated:")
             for h in hyps:
@@ -617,6 +619,22 @@ Return ONLY a valid JSON array with status field added:
     def _get_tools(self, names: list[str]) -> list[dict]:
         return [TOOLS_BY_NAME[n] for n in names if n in TOOLS_BY_NAME] or CLAWD_TOOLS
 
+    # ── Debug Logging ──────────────────────────────────────────────────────────
+
+    def _save_raw(self, label: str, raw_text: str, cfg=None) -> None:
+        """Save raw Claude response to debug dir for post-mortem analysis."""
+        try:
+            if cfg is None:
+                return
+            debug_dir = cfg.data_dir / "debug"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = debug_dir / f"{label}_{ts}.txt"
+            path.write_text(raw_text)
+            self.log(f"  Raw {label} response saved → {path}")
+        except Exception:
+            pass  # debug logging should never break the pipeline
+
     # ── JSON Extraction Helpers ───────────────────────────────────────────────
 
     @staticmethod
@@ -749,9 +767,12 @@ Produce an actionable diagnosis. Return ONLY valid JSON:
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = resp.content[0].text.strip()
+            self._save_raw("diagnosis", raw, cfg)
             diag = self._extract_json_object(raw)
             if diag is None:
-                diag = {"summary": raw, "root_causes": [], "data_fixes": [],
+                self.log(f"WARNING: Could not parse diagnosis JSON "
+                         f"({len(raw)} chars, raw saved to data/debug/)")
+                diag = {"summary": raw[:500], "root_causes": [], "data_fixes": [],
                         "training_changes": [], "v_next_watchpoints": []}
         except Exception as e:
             diag = {"summary": f"Error: {e}", "root_causes": [], "data_fixes": [],

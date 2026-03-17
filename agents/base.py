@@ -6,12 +6,29 @@ Agents are independently runnable and can be developed without touching
 the rest of the pipeline.
 """
 
+import logging
 import os
 import subprocess
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FILE LOGGER  (all agents write to the same log file for unified debugging)
+# ─────────────────────────────────────────────────────────────────────────────
+_log_file = None
+
+
+def setup_file_logger(log_dir: str | os.PathLike) -> None:
+    """Initialize the shared file logger. Called once by loop.py at startup."""
+    global _log_file
+    log_path = Path(log_dir) / "loop.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    _log_file = open(log_path, "a", buffering=1)  # line-buffered
+    _log_file.write(f"\n{'='*62}\n")
+    _log_file.write(f"  Loop started: {datetime.utcnow().isoformat()}\n")
+    _log_file.write(f"{'='*62}\n")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -212,7 +229,11 @@ class Agent(ABC):
     # ── Helpers ──────────────────────────────────────────────────────────────
 
     def log(self, msg: str) -> None:
-        print(f"  [{self.name.upper()} AGENT] {msg}", flush=True)
+        line = f"  [{self.name.upper()} AGENT] {msg}"
+        print(line, flush=True)
+        if _log_file:
+            ts = datetime.utcnow().strftime("%H:%M:%S")
+            _log_file.write(f"[{ts}] {line}\n")
 
     def run_cmd(self, cmd: list[str], env: dict | None = None,
                 check: bool = True) -> int:

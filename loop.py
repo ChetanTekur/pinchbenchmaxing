@@ -29,7 +29,7 @@ from pathlib import Path
 
 from utils.config import load_config
 from agents import AgentState, EvalAgent, EvalAnalysisAgent, DataAgent, CuratorAgent, TrainerAgent
-from agents.base import TASK_IDS, PauseException
+from agents.base import TASK_IDS, PauseException, setup_file_logger
 
 
 # ── Tuning parameters ─────────────────────────────────────────────────────────
@@ -181,6 +181,10 @@ def cmd_status(args, cfg) -> None:
 
 
 def cmd_run(args, cfg) -> None:
+    # Initialize file logger for all agents
+    log_dir = cfg.data_dir.parent / "logs"
+    setup_file_logger(log_dir)
+
     state_file = cfg.data_dir / "loop_state.json"
     state      = load_state(state_file)
 
