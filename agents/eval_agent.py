@@ -33,7 +33,7 @@ class EvalAgent(Agent):
             self.log(f"Benchmarking v{state.model_version}: {ollama_model}")
 
         # ── Run benchmark ────────────────────────────────────────────────────
-        log_file = self._run_benchmark(cfg, ollama_model)
+        log_file = self._run_benchmark(cfg, ollama_model, state)
 
         # ── Parse scores — hard gate ─────────────────────────────────────────
         scores = self._parse_scores(log_file)
@@ -61,13 +61,26 @@ class EvalAgent(Agent):
 
     # ── Benchmark runner ──────────────────────────────────────────────────────
 
-    def _run_benchmark(self, cfg, ollama_model: str) -> Path:
+    def _run_benchmark(self, cfg, ollama_model: str, state=None) -> Path:
         script = Path(__file__).parent.parent / "scripts" / "benchmark_run.sh"
         self.run_cmd(["bash", str(script), ollama_model])
+
+        # benchmark_run.sh writes to bench_{safe_name}.log
         safe_name = ollama_model.replace("/", "_").replace(":", "_")
         log_file  = cfg.data_dir.parent / "logs" / f"bench_{safe_name}.log"
         if not log_file.exists():
             raise RuntimeError(f"Benchmark log not found at {log_file}")
+
+        # Copy to a timestamped + versioned file so no iteration overwrites another
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        iteration = state.iteration if state else 0
+        version = state.model_version if state else 0
+        archive = cfg.data_dir.parent / "logs" / f"bench_v{version}_iter{iteration}_{ts}.log"
+        import shutil
+        shutil.copy2(str(log_file), str(archive))
+        self.log(f"  Log archived → {archive.name}")
+
         return log_file
 
     # ── Score parser ──────────────────────────────────────────────────────────
