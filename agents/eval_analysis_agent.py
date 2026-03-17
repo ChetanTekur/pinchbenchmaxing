@@ -378,11 +378,10 @@ class EvalAnalysisAgent(Agent):
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = resp.content[0].text.strip()
-            m = re.search(r'\[\s*\{.*\}\s*\]', raw, re.DOTALL)
-            if not m:
+            hyps = self._extract_json_array(raw)
+            if not hyps:
                 self.log(f"Could not parse hypotheses: {raw[:200]}")
                 return prev
-            hyps = json.loads(m.group())
             self.log(f"  {len(hyps)} hypotheses generated:")
             for h in hyps:
                 self.log(f"    [{h.get('confidence','?'):6}] {h['id']}: "
@@ -664,6 +663,50 @@ Return ONLY a valid JSON array with status field added:
                         return None
         return None
 
+    @staticmethod
+    def _extract_json_array(text: str) -> list | None:
+        """Robustly extract the outermost JSON array from a Claude response."""
+        text = re.sub(r'^```(?:json)?\s*', '', text.strip(), flags=re.MULTILINE)
+        text = re.sub(r'\s*```$', '', text.strip(), flags=re.MULTILINE)
+        text = text.strip()
+
+        try:
+            result = json.loads(text)
+            if isinstance(result, list):
+                return result
+        except json.JSONDecodeError:
+            pass
+
+        start = text.find('[')
+        if start == -1:
+            return None
+        depth = 0
+        in_str = False
+        escape = False
+        for i, ch in enumerate(text[start:], start):
+            if escape:
+                escape = False
+                continue
+            if ch == '\\' and in_str:
+                escape = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == '[':
+                depth += 1
+            elif ch == ']':
+                depth -= 1
+                if depth == 0:
+                    try:
+                        result = json.loads(text[start:i + 1])
+                        return result if isinstance(result, list) else None
+                    except json.JSONDecodeError:
+                        return None
+        return None
+
     # ── Final Diagnosis ───────────────────────────────────────────────────────
 
     def _final_diagnosis(self, client, signals, state, hypotheses, probes) -> dict:
@@ -702,7 +745,7 @@ Produce an actionable diagnosis. Return ONLY valid JSON:
 }}"""
         try:
             resp = client.messages.create(
-                model=ANALYSIS_MODEL, max_tokens=2048,
+                model=ANALYSIS_MODEL, max_tokens=8192,
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = resp.content[0].text.strip()
