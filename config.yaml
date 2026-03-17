@@ -47,3 +47,9 @@ loop:
   target_score: 0.85          # stop when benchmark score exceeds this
   weak_task_threshold: 0.50   # tasks below this get more synthetic data each iteration
   examples_per_weak_task: 20  # examples to generate per weak task per iteration
+
+# HuggingFace dataset repo for versioned data snapshots
+# CuratorAgent auto-pushes after each curation pass.
+# Set HF_TOKEN env var or run: huggingface-cli login
+huggingface:
+  dataset_repo: ChetanTekur/pinchbench-clawd

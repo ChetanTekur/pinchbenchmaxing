@@ -7,12 +7,15 @@ Pipeline:
   Gate 3: Filter below min_judge_score
   Gate 4: Deduplicate semantically similar examples
   Gate 5: Verify train.jsonl is non-empty
+  Gate 6: Snapshot dataset to HuggingFace (versioned, public)
 
 Only high-quality, diverse examples make it through to fine-tuning.
 """
 
 import json
+import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from .base import Agent, AgentState
@@ -81,7 +84,7 @@ class CuratorAgent(Agent):
                     self.log(f"  Dedup: removed {removed} examples ({pct}%)")
 
                     if pct > 30:
-                        self.log(f"  ⚠ WARNING: {pct}% removed — generation may lack diversity")
+                        self.log(f"  WARNING: {pct}% removed — generation may lack diversity")
 
         # ── Gate 5: Verify output is non-empty ─────────────────────────────
         train_file = cfg.train_file
@@ -93,7 +96,63 @@ class CuratorAgent(Agent):
         n = sum(1 for line in train_file.read_text().splitlines() if line.strip())
         self.log(f"  {n} examples passed full curation pipeline (score >= {min_score}/5)")
 
+        # ── Gate 6: Snapshot to HuggingFace ────────────────────────────────
+        self._push_to_huggingface(cfg, state, n)
+
         return state
+
+    def _push_to_huggingface(self, cfg, state: AgentState, n_examples: int) -> None:
+        """Push curated dataset to HuggingFace for versioning and public access."""
+        try:
+            repo_id = cfg.huggingface.dataset_repo
+        except AttributeError:
+            self.log("  No huggingface.dataset_repo in config — skipping HF push")
+            return
+
+        hf_token = os.environ.get("HF_TOKEN")
+        if not hf_token:
+            self.log("  HF_TOKEN not set — skipping HuggingFace push")
+            self.log("  To enable: export HF_TOKEN=hf_... or huggingface-cli login")
+            return
+
+        try:
+            from huggingface_hub import HfApi
+
+            api = HfApi(token=hf_token)
+            api.create_repo(repo_id, repo_type="dataset", exist_ok=True)
+
+            version = f"v{state.model_version}"
+            ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            commit_msg = (f"Iteration {state.iteration} ({version}): "
+                          f"{n_examples} examples after curation")
+
+            files_to_upload = []
+            for fname in ["train.jsonl", "val.jsonl", "scores.json"]:
+                path = cfg.data_dir / fname
+                if path.exists():
+                    files_to_upload.append((str(path), fname))
+
+            # Also upload loop state and analysis reports
+            state_file = cfg.data_dir / "loop_state.json"
+            if state_file.exists():
+                files_to_upload.append((str(state_file), "loop_state.json"))
+
+            for local, remote in files_to_upload:
+                api.upload_file(
+                    path_or_fileobj=local,
+                    path_in_repo=remote,
+                    repo_id=repo_id,
+                    repo_type="dataset",
+                    commit_message=commit_msg,
+                )
+
+            self.log(f"  Pushed {len(files_to_upload)} files to "
+                     f"huggingface.co/datasets/{repo_id} ({commit_msg})")
+
+        except ImportError:
+            self.log("  WARNING: huggingface_hub not installed — skipping HF push")
+        except Exception as e:
+            self.log(f"  WARNING: HuggingFace push failed: {e} (non-fatal)")
 
 
 # ── Standalone entry point ────────────────────────────────────────────────────
