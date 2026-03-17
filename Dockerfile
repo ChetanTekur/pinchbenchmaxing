@@ -77,4 +77,7 @@ ENV PATH="/root/.local/bin:/root/.openclaw/bin:/usr/local/bin:${PATH}" \
 WORKDIR /root/pbm
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
-CMD ["/bin/bash", "-c", "bash /root/scripts/startup.sh && tail -f /dev/null"]
+# Container starts idle. Run startup.sh manually after SSH:
+#   bash /root/scripts/startup.sh
+# This avoids crash-loops when DNS isn't ready on cold start.
+CMD ["tail", "-f", "/dev/null"]
