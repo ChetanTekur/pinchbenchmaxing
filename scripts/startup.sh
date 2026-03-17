@@ -22,11 +22,10 @@ export PATH="$HOME/.local/bin:$HOME/.openclaw/bin:/usr/local/bin:$PATH"
 
 REPO_DIR="/root/pbm"
 REPO_URL="https://github.com/ChetanTekur/pinchbenchmaxing.git"
-ENV_FILE="/workspace/synthbench/set_env.sh"
-
 # PBM_WORKSPACE comes from Dockerfile ENV; default here is only a fallback
 export PBM_WORKSPACE="${PBM_WORKSPACE:-/workspace/synthbench}"
 WORKSPACE="$PBM_WORKSPACE"
+ENV_FILE="$WORKSPACE/set_env.sh"
 
 # Write key env vars to ~/.bashrc so SSH sessions inherit them automatically
 grep -qxF "export PBM_WORKSPACE=$PBM_WORKSPACE" ~/.bashrc 2>/dev/null \
