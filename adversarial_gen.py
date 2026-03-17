@@ -32,7 +32,7 @@ DATA_DIR   = _cfg.data_dir
 TRAIN_FILE = _cfg.train_file
 VAL_FILE   = _cfg.val_file
 MODEL      = _cfg.claude.generation
-EXAMPLES_PER_TASK = 3
+EXAMPLES_PER_TASK = 10
 
 
 # ─────────────────────────────────────────────────────────────────────────────

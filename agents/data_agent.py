@@ -49,15 +49,15 @@ class DataAgent(Agent):
             self.log("No diagnosis available — falling back to plain topup")
 
         # ── Classify tasks by generation strategy ──────────────────────────
-        tasks_topup = []
+        # ALL weak tasks get targeted topup (volume).
+        # Tasks that scored 0 or are marked "regenerate" ALSO get adversarial
+        # (failure-aware examples from benchmark transcripts).
+        tasks_topup = list(state.weak_tasks)  # every weak task gets topup
         tasks_adversarial = []
 
         for task in state.weak_tasks:
-            strategy = self._select_strategy(task, state, cfg)
-            if strategy == "adversarial":
+            if self._needs_adversarial(task, state):
                 tasks_adversarial.append(task)
-            else:
-                tasks_topup.append(task)
 
         # ── Execute strategies ─────────────────────────────────────────────
 
@@ -134,23 +134,20 @@ class DataAgent(Agent):
 
         return result
 
-    def _select_strategy(self, task: str, state: AgentState, cfg) -> str:
-        """Pick generation strategy for a task based on score + diagnosis."""
+    def _needs_adversarial(self, task: str, state: AgentState) -> bool:
+        """Should this task also get adversarial examples (in addition to topup)?"""
         analysis = state.last_analysis or {}
 
-        # Check if diagnosis says to regenerate
+        # Diagnosis says regenerate → learn from failure transcripts
         for df in analysis.get("data_fixes", []):
             if df.get("task") == task and df.get("action") in ("regenerate", "delete"):
-                return "adversarial"  # regenerate = adversarial (learn from failure)
+                return True
 
-        # Tasks that scored 0 benefit most from adversarial generation
-        score = state.scores.get(task, 0.0)
-        if score == 0.0:
-            log_dir = cfg.data_dir.parent / "logs"
-            if log_dir.exists() and any(log_dir.glob("bench_*.log")):
-                return "adversarial"
+        # Tasks scoring 0 always benefit from adversarial
+        if state.scores.get(task, 0.0) == 0.0:
+            return True
 
-        return "topup"
+        return False
 
 
 # ── Standalone entry point ────────────────────────────────────────────────────
