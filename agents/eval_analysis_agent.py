@@ -767,7 +767,7 @@ Produce an actionable diagnosis. Return ONLY valid JSON:
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = resp.content[0].text.strip()
-            self._save_raw("diagnosis", raw, cfg)
+            self._save_raw("diagnosis", raw, self._cfg)
             diag = self._extract_json_object(raw)
             if diag is None:
                 self.log(f"WARNING: Could not parse diagnosis JSON "
