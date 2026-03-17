@@ -132,10 +132,14 @@ class CuratorAgent(Agent):
                 if path.exists():
                     files_to_upload.append((str(path), fname))
 
-            # Also upload loop state and analysis reports
+            # Also upload loop state and dataset card
             state_file = cfg.data_dir / "loop_state.json"
             if state_file.exists():
                 files_to_upload.append((str(state_file), "loop_state.json"))
+
+            dataset_card = Path(__file__).parent.parent / "dataset_card.md"
+            if dataset_card.exists():
+                files_to_upload.append((str(dataset_card), "README.md"))
 
             for local, remote in files_to_upload:
                 api.upload_file(
