@@ -85,11 +85,10 @@ class DataAgent(Agent):
             log_dir = cfg.data_dir.parent / "logs"
             script = str(_PROJECT_ROOT / "adversarial_gen.py")
 
-            n_per_task = cfg.get("data", {})
-            if hasattr(n_per_task, "get"):
-                n_per_task = n_per_task.get("adversarial_examples_per_task", 3)
-            else:
-                n_per_task = 3
+            try:
+                n_per_task = cfg.data.adversarial_examples_per_task
+            except AttributeError:
+                n_per_task = 10  # default: 10 adversarial examples per failed task
 
             rc = self.run_cmd(
                 [sys.executable, script, "run",
