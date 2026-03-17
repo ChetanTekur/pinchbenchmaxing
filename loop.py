@@ -214,6 +214,28 @@ def cmd_run(args, cfg) -> None:
     target    = cfg.loop.target_score
     threshold = cfg.loop.weak_task_threshold
 
+    # ── Validate base model (once — result cached in state) ────────────────
+    if not state.model_validated:
+        print(f"\n[orchestrator] Validating base model: {cfg.base_model}")
+        from stages.validate_model import validate_model
+        result = validate_model(cfg.base_model)
+        if not result["ok"]:
+            for e in result["errors"]:
+                print(f"  ERROR: {e}")
+            print(f"\n  Fix config.yaml model.base and restart.")
+            sys.exit(1)
+        for w in result["warnings"]:
+            print(f"  WARNING: {w}")
+        info = result["info"]
+        print(f"  Architecture: {info.get('model_type', '?')}, "
+              f"~{info.get('estimated_params_b', '?')}B params, "
+              f"Unsloth: {'yes' if info.get('unsloth_supported') else 'check'}")
+        state.model_validated = True
+        save_state(state, state_file)
+        print(f"  [OK] Model validated (cached — won't re-check next iteration)\n")
+    else:
+        print(f"[orchestrator] Model '{cfg.base_model}' already validated (cached)")
+
     pipeline = [
         EvalAgent(),
         EvalAnalysisAgent(),

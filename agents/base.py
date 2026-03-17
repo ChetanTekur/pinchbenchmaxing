@@ -118,6 +118,7 @@ class AgentState:
     # Control flow
     pause_reason:        str   = ""
     last_analysis:       dict  = field(default_factory=dict)
+    model_validated:     bool  = False
 
     @property
     def avg_score(self) -> float:
@@ -187,6 +188,7 @@ class AgentState:
             "best_version":        self.best_version,
             "pause_reason":        self.pause_reason,
             "last_analysis":       self.last_analysis,
+            "model_validated":     self.model_validated,
         }
 
     @classmethod
@@ -205,6 +207,7 @@ class AgentState:
             best_version=         d.get("best_version", 0),
             pause_reason=         d.get("pause_reason", ""),
             last_analysis=        d.get("last_analysis", {}),
+            model_validated=      d.get("model_validated", False),
         )
 
 

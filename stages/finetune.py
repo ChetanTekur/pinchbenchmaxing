@@ -32,26 +32,6 @@ def main():
     cfg = load_config(args.config)
     t   = cfg["training"]
 
-    # ── Validate base model before spending GPU time ───────────────────────
-    print(f"Validating base model: {cfg.base_model}")
-    from stages.validate_model import validate_model
-    validation = validate_model(cfg.base_model)
-    if not validation["ok"]:
-        print("\nModel validation FAILED:")
-        for e in validation["errors"]:
-            print(f"  ERROR: {e}")
-        raise RuntimeError(
-            f"Base model '{cfg.base_model}' failed validation. "
-            "Fix config.yaml model.base or resolve the errors above."
-        )
-    for w in validation["warnings"]:
-        print(f"  WARNING: {w}")
-    info = validation["info"]
-    if info.get("estimated_params_b"):
-        print(f"  {info['estimated_params_b']}B params, "
-              f"~{info.get('estimated_vram_gb', '?')} GB VRAM")
-    print()
-
     print(f"Model      : {cfg.base_model}")
     print(f"Output     : {cfg.adapter_dir}")
     print(f"Train data : {cfg.train_sft_file}")
