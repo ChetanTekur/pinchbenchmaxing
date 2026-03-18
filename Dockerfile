@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         vim \
         jq \
+        tmux \
         build-essential \
         ca-certificates \
         libssl-dev \
