@@ -14,8 +14,12 @@ The loop runs overnight without human intervention. This is the same idea as [Ka
 |-------|-------|-------|
 | qwen3:8b (base) | 3.1 / 23 (13%) | No fine-tuning |
 | qwen35-9b-clawd-v1 | 9.9 / 23 (43%) | First fine-tune, ~900 examples |
-| qwen35-9b-clawd-v3 | 16.8 / 23 (73%) | ~1,400 examples, targeted topup |
-| qwen35-9b-clawd-v4 | in progress | Agentic loop iteration |
+| qwen35-9b-clawd-v3 | 16.8 / 23 (73%) | ~1,400 examples, manual topup |
+| qwen35-9b-clawd-v4 | 13.6 / 23 (59%) | Regression — data pipeline bugs |
+| qwen35-9b-clawd-v5 | 15.0 / 23 (65%) | New agentic pipeline, recovering |
+| qwen35-9b-clawd-v6 | in progress | Score-proportional data gen |
+
+Dataset published at [huggingface.co/datasets/ChetanTekur/pinchbench-clawd](https://huggingface.co/datasets/ChetanTekur/pinchbench-clawd) (CC BY 4.0).
 
 ---
 
@@ -40,26 +44,39 @@ The loop runs overnight without human intervention. This is the same idea as [Ka
 
 Each agent has one job. They hand off through `AgentState`:
 
-**1. EvalAgent** — benchmarks the current model against all 23 PinchBench tasks. Writes per-task scores and a list of `weak_tasks` (tasks below `weak_task_threshold`) to state. Skips automatically if eval has already been run for the current model version — no redundant benchmarking.
+**1. EvalAgent** — benchmarks the current model against all 23 PinchBench tasks. Writes per-task scores and a list of `weak_tasks` (tasks below `weak_task_threshold`) to state. Skips automatically if eval has already been run for the current model version — no redundant benchmarking. Each benchmark log is archived with version + timestamp so no iteration overwrites another.
 
-**2. EvalAnalysisAgent** — this is where Claude becomes the brain. It reads the scores from state, discovers all registered model versions in Ollama, and sends targeted probe prompts to each version to observe behavioral differences. It then asks Claude to form hypotheses, test them, and produce a structured diagnosis: root causes, affected tasks, and concrete data fixes. The diagnosis is written back to `state.last_analysis` and `state.failure_analysis` for the next agent to consume. This is not a script deciding "score < threshold → add data" — it is Claude reasoning about *why* the model fails.
+**2. EvalAnalysisAgent** — this is where Claude becomes the brain. It reads the scores from state, discovers all registered model versions in Ollama, and sends targeted probe prompts to each version to observe behavioral differences. It then asks Claude to form hypotheses, test them, and produce a structured diagnosis: root causes, affected tasks, and concrete data fixes. The diagnosis is written back to `state.last_analysis` and `state.failure_analysis` for the next agent to consume. Raw Claude responses are saved to `data/debug/` for post-mortem analysis when JSON parsing fails.
 
-**3. DataAgent** — reads `state.weak_tasks` and `state.failure_analysis` to decide what to generate *and how*. For each weak task, it selects one of three strategies:
-- **Targeted topup** (default) — writes the diagnosis to `current_diagnosis.json`, passes it to `targeted_topup.py`. The meta-prompt includes the root cause and fix recommendation. Variation types (error_recovery, multi_tool_chain, etc.) are weighted based on failure patterns — not round-robin.
-- **Adversarial generation** — for tasks that scored 0.0 (complete failure). Parses the model's actual benchmark transcript to see what it did wrong, then generates examples showing the correct approach to that exact scenario. Uses real-time Claude API since volume is low (~3 examples per failed task).
-- **Plain topup** (fallback) — original round-robin when no diagnosis is available.
+**3. DataAgent** — reads the diagnosis and computes a **score-proportional generation plan**. Instead of generating a flat number of examples per task, it scales with the gap to target:
 
-**4. CuratorAgent** — five-stage quality pipeline:
+```
+n = max_examples_per_task × (gap / target_score)
+
+Score 0.00 → 100 examples (full allocation)
+Score 0.18 → 79 examples
+Score 0.50 → 41 examples
+Score 0.70 → 18 examples
+Score 0.85 → 0 (at target)
+```
+
+Total capped at `total_new_examples_cap` per iteration. Two generation strategies run for each weak task:
+- **Targeted topup** — diagnosis-aware meta-prompts with weighted variation types (error_recovery, multi_tool_chain, etc. biased by failure patterns)
+- **Adversarial generation** (for score-0 tasks) — parses the model's benchmark transcript to see what it actually did wrong, generates examples showing the correct approach
+
+**4. CuratorAgent** — six-stage quality pipeline:
 1. **Score** all examples via LLM judge (1–5 scale)
-2. **Repair** borderline examples (score 2–3) — sends them to Claude with the judge's feedback to fix specific issues while preserving structure, then re-scores. Only keeps repairs that actually improved.
-3. **Filter** below `min_judge_score` — removes the rest
-4. **Deduplicate** — TF-IDF cosine similarity on user messages + Jaccard similarity on tool calls. Removes near-identical examples, keeping the highest-scored from each cluster.
+2. **Repair** borderline examples (score 2–3) — sends to Claude with judge feedback, re-scores, keeps only improvements
+3. **Filter** below `min_judge_score`
+4. **Deduplicate** — TF-IDF cosine similarity + tool-call Jaccard similarity, keeps highest-scored per cluster
 5. **Verify** train.jsonl is non-empty
+6. **Snapshot** to HuggingFace — versioned push of train.jsonl, val.jsonl, scores.json for public access and rollback
 
-**5. TrainerAgent** — reads the curated dataset and runs the full training pipeline: prepare → finetune → convert → `register_model.sh`. Registers the result in Ollama as a versioned model (`qwen35-9b-clawd-v4`, etc.) and records it in `state.model_history`. Previous versions stay registered so EvalAnalysisAgent can probe and compare them in future iterations.
+**5. TrainerAgent** — validates the base model (HuggingFace existence, Unsloth support, architecture check — cached after first run), then runs the full training pipeline: prepare → finetune → convert → `register_model.sh`. Registers the result in Ollama as a versioned model (`qwen35-9b-clawd-v6`, etc.).
 
-**Gates block the loop before expensive stages.** Agents cannot proceed to training on bad inputs:
-- EvalAnalysisAgent failure or empty diagnosis → **PAUSE** *(training never starts without a real diagnosis)*
+**Gates block the loop before expensive stages:**
+- Model validation fails (wrong architecture, not an LLM, etc.) → **EXIT**
+- EvalAnalysisAgent failure or empty diagnosis → **PAUSE**
 - Score regression >5% below best ever → **PAUSE**
 - No improvement for 3 consecutive iterations → **PAUSE**
 - DataAgent generates 0 new examples → **PAUSE**
@@ -98,11 +115,14 @@ bash scripts/startup.sh
 cd $PBM_WORKSPACE/skill && bash scripts/run.sh --register && cd -
 
 # 5. Generate initial training data (cheapest to run locally)
+source /workspace/synthbench/set_env.sh
 python generate.py submit && python generate.py status && python generate.py collect
 python llm_judge.py run && python llm_judge.py filter --min 3
 
-# 6. Run the agentic loop — this is the main entry point
+# 6. Run the agentic loop in tmux (survives SSH disconnects)
+tmux new -s loop
 python3 loop.py run
+# Detach: Ctrl+B, D — reattach: tmux attach -t loop
 ```
 
 That's it. The loop evaluates, diagnoses, generates data, curates, and trains — uploading results to PinchBench automatically on each iteration.
@@ -111,33 +131,31 @@ That's it. The loop evaluates, diagnoses, generates data, curates, and trains �
 
 ## GPU Options
 
-This project requires a GPU for fine-tuning. You can use any of the following:
-
-### Cloud GPU providers
+This project requires a GPU for fine-tuning. Any provider works:
 
 | Provider | Notes |
 |----------|-------|
-| **[RunPod](https://runpod.io)** | Network volumes persist data across pod restarts. Recommended. |
-| **[Vast.ai](https://vast.ai)** | Often cheapest for spot instances. Set `PBM_WORKSPACE` to a mounted volume. |
-| **[Lambda Labs](https://lambdalabs.com)** | Reliable, fixed pricing. Persistent filesystems available. |
-| **[Google Colab Pro+](https://colab.research.google.com)** | A100 available; mount Google Drive as workspace. Short session limits. |
+| **[RunPod](https://runpod.io)** | Network volumes persist data across pod restarts. |
+| **[Vast.ai](https://vast.ai)** | Often cheapest for spot instances. |
+| **[Lambda Labs](https://lambdalabs.com)** | Reliable, fixed pricing. |
+| **[Google Colab Pro+](https://colab.research.google.com)** | A100 available; mount Google Drive as workspace. |
 
 A GPU with **≥20 GB VRAM** is recommended (RTX 4090 / A100). Qwen3.5-9B with LoRA fits in 20 GB.
 
 **Local CUDA:** Works directly. Set `PBM_WORKSPACE` to a local directory and install dependencies from the Dockerfile or via `scripts/setup_pod.sh`.
 
-**Apple Silicon / Mac:** This is a future goal and has not been tested yet. Unsloth has experimental MPS support and the training stages use standard HuggingFace/TRL primitives, so it may work. If you try it, we'd love to hear how it goes — open an issue or PR.
+**Apple Silicon / Mac:** Not tested yet. Unsloth has experimental MPS support and the training stages use standard HuggingFace/TRL primitives, so it may work. If you try it, we'd love to hear how it goes — open an issue or PR.
 
 ### RunPod-specific setup
-
-If using RunPod:
 
 1. **Network Volume** — create one in your target region (e.g. CA-2), 200 GB, mounted at `/workspace`
 2. **Pod** — deploy with Docker image `ghcr.io/chetantekur/pinchbenchmaxing:latest`, attach the volume, ≥24 GB VRAM GPU
 3. **Region** — pod and volume must be in the same datacenter
 4. **Container disk** — 50 GB minimum (model cache + GGUF)
 
-The Docker image (`Dockerfile`) contains PyTorch 2.6 + CUDA 12.4, Unsloth, llama.cpp, Ollama, Node.js 22, and OpenClaw. It does **not** contain the project code — `startup.sh` clones this repo to `/root/pbm` on first start and `git pull`s on subsequent restarts, so code updates only require a pod restart.
+The Docker image contains PyTorch 2.6 + CUDA 12.4, Unsloth, Ollama, Node.js 22, and OpenClaw. It does **not** contain the project code — `startup.sh` clones this repo to `/root/pbm` on first start and `git pull`s on subsequent restarts.
+
+The container starts idle (`tail -f /dev/null`). After SSH, run `bash /root/scripts/startup.sh` to start services.
 
 ---
 
@@ -145,32 +163,32 @@ The Docker image (`Dockerfile`) contains PyTorch 2.6 + CUDA 12.4, Unsloth, llama
 
 | Key | Purpose |
 |-----|---------|
-| `ANTHROPIC_API_KEY` | Generating synthetic training data (`generate.py`, `llm_judge.py`, `topup.py`, `eval_analysis_agent.py`) |
-| `OPENROUTER_API_KEY` | **PinchBench LLM judge** (claude-opus-4.5 via OpenRouter), image generation task |
+| `ANTHROPIC_API_KEY` | Generating synthetic training data, LLM judge, failure analysis |
+| `OPENROUTER_API_KEY` | **PinchBench LLM judge** (claude-opus-4.5 via OpenRouter), image generation |
 | `BRAVE_API_KEY` | Web search tasks (task_02, task_06, task_18) |
 | `OPENCLAW_GATEWAY_TOKEN` | OpenClaw gateway auth (any random string) |
+| `HF_TOKEN` | HuggingFace dataset push (optional — CuratorAgent auto-pushes after curation) |
 
-**Critical:** The PinchBench judge calls Claude through **OpenRouter**, not the Anthropic API directly. `OPENROUTER_API_KEY` is required for benchmarking — `ANTHROPIC_API_KEY` alone is not sufficient. See [Key Insights](#key-insights--gotchas) for details.
+**Critical:** The PinchBench judge calls Claude through **OpenRouter**, not the Anthropic API directly. You need both keys.
 
 ### Persisting keys across restarts
 
 ```bash
-# Copy the template to your persistent storage, fill in values
 cp scripts/set_env.sh /workspace/synthbench/set_env.sh
 vim /workspace/synthbench/set_env.sh
 ```
 
-`startup.sh` sources this file automatically on every pod start. Always use `source`, not `sh`:
+`startup.sh` sources this file automatically. Always use `source`, not `sh`:
 ```bash
 source /workspace/synthbench/set_env.sh    # correct
-sh /workspace/synthbench/set_env.sh        # WRONG — exports into a subshell that exits
+sh /workspace/synthbench/set_env.sh        # WRONG — subshell exits, nothing exported
 ```
 
 ---
 
 ## Configuration
 
-All settings live in `config.yaml`. `utils/config.py` is a thin Python loader that reads `config.yaml` and computes derived paths — it is not a separate config file.
+All settings live in `config.yaml`. `utils/config.py` is a thin Python loader — not a separate config file.
 
 ```yaml
 model:
@@ -178,50 +196,40 @@ model:
   name: qwen35-9b-clawd        # used for output dirs + Ollama model name
 
 paths:
-  workspace: ${PBM_WORKSPACE:-./workspace}  # override with env var
+  workspace: ${PBM_WORKSPACE:-./workspace}
 
 data:
   examples_per_task: 70        # target training examples per task
-  val_split: 0.1               # held out for validation
+  val_split: 0.1
   min_judge_score: 3           # discard examples below this (1–5 scale)
 
 training:
   epochs: 3
   batch_size: 2
-  grad_accum: 4                # effective batch = batch_size × grad_accum
+  grad_accum: 4
   learning_rate: 2e-4
   lora_r: 16
   lora_alpha: 32
   max_seq_len: 4096
 
 convert:
-  quantization: q4_k_m         # q4_k_m (default), q8_0, f16
+  quantization: q4_k_m
 
 claude:
-  generation: claude-sonnet-4-5   # model for synthetic data generation
-  judge: claude-sonnet-4-5        # model for quality scoring
-  analysis: claude-sonnet-4-6     # model for failure diagnosis
+  generation: claude-sonnet-4-5   # synthetic data generation
+  judge: claude-sonnet-4-5        # quality scoring
+  analysis: claude-sonnet-4-6     # failure diagnosis
 
 loop:
-  max_iterations: 2            # start low, verify end-to-end, then increase
-  target_score: 0.85           # loop exits when benchmark avg exceeds this
-  weak_task_threshold: 0.50    # tasks below this trigger data generation
-  examples_per_weak_task: 20   # new examples per weak task per iteration
+  max_iterations: 5
+  target_score: 0.85
+  weak_task_threshold: 0.50
+  max_examples_per_task: 100  # ceiling for score-0 tasks (decays proportionally)
+  total_new_examples_cap: 500 # max new examples per iteration
+
+huggingface:
+  dataset_repo: ChetanTekur/pinchbench-clawd  # auto-push after curation
 ```
-
-**Derived paths** (all relative to `workspace`):
-
-| Config property | Resolves to |
-|----------------|-------------|
-| `data_dir` | `{workspace}/data/` |
-| `adapter_dir` | `{workspace}/{model_name}/` |
-| `merged_dir` | `{workspace}/{model_name}_merged/` |
-| `gguf_dir` | `{workspace}/{model_name}_merged_gguf/` |
-| `gguf_file` | `{workspace}/{model_name}_merged_gguf/{model_name}_merged.Q4_K_M.gguf` |
-| `train_file` | `{workspace}/data/train.jsonl` |
-| `val_file` | `{workspace}/data/val.jsonl` |
-
-Override workspace: `export PBM_WORKSPACE=/your/path`
 
 ---
 
@@ -230,182 +238,50 @@ Override workspace: `export PBM_WORKSPACE=/your/path`
 ```
 config.yaml                  # all settings — single source of truth
 loop.py                      # agentic loop orchestrator
+LICENSE                      # MIT (code), CC BY 4.0 (dataset)
+dataset_card.md              # HuggingFace dataset card (pushed as README.md to HF)
 
 agents/
-  base.py                    # AgentState (shared state between all agents), Agent base class, TASK_IDS registry
-  eval_agent.py              # benchmarks current model, parses scores, identifies weak tasks
-  eval_analysis_agent.py     # probes model versions via Ollama, diagnoses regressions with Claude
-  data_agent.py              # calls topup.py for weak tasks, drives Claude Batch API
-  curator_agent.py           # llm_judge quality gate — scores + filters training data
-  trainer_agent.py           # prepare → finetune → convert → register versioned Ollama model
+  base.py                    # AgentState (shared state), Agent base class, file logger
+  eval_agent.py              # benchmarks model, parses scores, archives logs per iteration
+  eval_analysis_agent.py     # probes model versions, diagnoses regressions with Claude
+  data_agent.py              # score-proportional generation: targeted topup + adversarial
+  curator_agent.py           # score → repair → filter → dedup → verify → HF push
+  trainer_agent.py           # prepare → finetune → convert → register versioned model
 
 stages/
   prepare.py                 # convert train.jsonl → SFT chat format for Unsloth
   finetune.py                # LoRA fine-tuning with Unsloth (supports --dry-run)
   convert.py                 # export merged model → GGUF (llama.cpp quantization)
-  probe.py                   # interactive model testing from merged weights (no GGUF needed)
+  validate_model.py          # check HF existence, architecture, Unsloth support, VRAM
+  probe.py                   # interactive model testing from merged weights
 
 scripts/
-  startup.sh                 # every-session: kill stale procs, start Ollama + OpenClaw, health check
-  benchmark_run.sh           # run PinchBench for a given model, save log to network volume
+  startup.sh                 # every-session: start Ollama + OpenClaw (DNS retry built in)
+  benchmark_run.sh           # run PinchBench, save log to network volume
   register_model.sh          # register GGUF in Ollama with correct tool-calling Modelfile
-  set_env.sh                 # API key template — copy to persistent storage and fill in
-  setup_pod.sh               # one-time pod setup (if not using the Docker image)
-  check_setup.sh             # pre-benchmark checker: APIs, deps, services
+  set_env.sh                 # API key template — copy to persistent storage
+  setup_pod.sh               # one-time pod setup (if not using Docker image)
+  check_setup.sh             # pre-benchmark checker
   train_and_eval.sh          # manual pipeline: prepare → finetune → convert → benchmark
-  patch_openclaw_image_gen.py  # remove invalid 'image' key from openclaw.json
+  patch_openclaw_image_gen.py
 
 utils/
   config.py                  # loads config.yaml, computes all derived paths
   prompts.py                 # shared constants: OPENCLAW_SYSTEM prompt, VALID_TOOLS
 
-generate.py                  # generate initial synthetic training data via Claude Batch API
+generate.py                  # generate initial training data via Claude Batch API
 llm_judge.py                 # score examples 1–5 with Claude, filter at --min 3
-topup.py                     # fill per-task gaps (plain round-robin, used as fallback)
+topup.py                     # fill per-task gaps (plain round-robin fallback)
 targeted_topup.py            # diagnosis-aware generation — weighted variations, injected context
 adversarial_gen.py           # generate from benchmark failure transcripts
 example_repair.py            # repair borderline examples (score 2-3) instead of discarding
 dedup.py                     # semantic deduplication (TF-IDF + tool Jaccard similarity)
 inspect_data.py              # dataset stats, validation, sampling
-test_tool_call.sh            # verify fine-tuned model emits proper <tool_call> blocks
+test_tool_call.sh            # verify fine-tuned model emits <tool_call> blocks
 openclaw_template.json       # OpenClaw config template (secrets injected by startup.sh)
 Dockerfile                   # full image: PyTorch + Unsloth + Ollama + OpenClaw
-Dockerfile.bench             # lightweight image: Ollama + OpenClaw only (no training)
-```
-
----
-
-## Data Generation Pipeline
-
-Run locally (Anthropic Batch API calls are ~50% cheaper and there's no GPU requirement here).
-
-### 1. Generate initial data
-
-Make sure `set_env.sh` is sourced (it sets `ANTHROPIC_API_KEY` and `PBM_WORKSPACE`), then from the repo root:
-
-```bash
-python generate.py submit    # submit ~920 examples to Claude Batch API
-python generate.py status    # poll until complete
-python generate.py collect   # write train.jsonl + val.jsonl
-```
-
-Generates ~40 synthetic agent traces per PinchBench task (23 tasks). Each trace is a multi-turn conversation where Clawd uses tools to complete a real task.
-
-### 2. Score and filter
-
-```bash
-python llm_judge.py run             # score all examples 1–5 (resumes if interrupted)
-python llm_judge.py report          # per-task score summary
-python llm_judge.py filter --min 3  # remove low-quality examples in-place
-```
-
-### 3. Inspect and validate
-
-```bash
-python inspect_data.py stats     # examples per task, format breakdown
-python inspect_data.py validate  # structural issues
-python inspect_data.py sample    # preview random examples
-```
-
-### 4. Top up weak tasks
-
-```bash
-python topup.py count   # show current vs target per task
-python topup.py run     # generate more for tasks below target
-python topup.py status  # check batch progress
-python topup.py collect # download results when done
-```
-
-For tasks that tend to produce truncated examples:
-```bash
-EXAMPLES_PER_CALL=1 python topup.py run   # one example at a time (avoids truncation)
-```
-
----
-
-## Fine-Tuning Pipeline (Advanced / Manual)
-
-> **Normal path:** `python3 loop.py run` — TrainerAgent handles all of this automatically.
->
-> This section is for debugging individual stages or running a one-off fine-tune outside the loop.
-
-### 1. Prepare SFT data
-
-```bash
-python -m stages.prepare
-```
-
-Converts `train.jsonl` / `val.jsonl` from agent-trace format to ChatML SFT format for Unsloth.
-
-### 2. Fine-tune
-
-```bash
-python -m stages.finetune --dry-run   # load model, print config, exit
-python -m stages.finetune             # 30–90 min on A100
-```
-
-Downloads `Qwen/Qwen3.5-9B` from HuggingFace on first run (~18 GB). Saves LoRA adapter and merged 16-bit weights to the workspace.
-
-### 3. Convert to GGUF
-
-```bash
-python -m stages.convert
-```
-
-Quantizes the merged model to GGUF using llama.cpp (pre-installed in the Docker image). Output: `{workspace}/{model_name}_merged_gguf/{model_name}_merged.Q4_K_M.gguf`.
-
-### 4. Register with Ollama
-
-```bash
-bash scripts/register_model.sh
-
-# Or with explicit version name:
-OLLAMA_MODEL=qwen35-9b-clawd-v4 bash scripts/register_model.sh
-```
-
-**This step is critical** — see [Key Insights](#key-insights--gotchas) for why a plain `ollama create` will silently break tool calling.
-
-### 5. Verify
-
-```bash
-ollama list
-bash test_tool_call.sh   # verify <tool_call> blocks are being emitted
-```
-
-### Manual full pipeline (non-agentic)
-
-```bash
-# Train and benchmark in one shot:
-OLLAMA_MODEL=qwen35-9b-clawd-v4 bash scripts/train_and_eval.sh
-```
-
----
-
-## Running the Benchmark
-
-```bash
-# Run startup first (every session)
-bash scripts/startup.sh
-
-# Check everything is ready
-bash scripts/check_setup.sh
-
-# Run benchmark — uploads to PinchBench leaderboard by default
-bash scripts/benchmark_run.sh ollama/qwen35-9b-clawd-v4
-
-# Skip leaderboard upload (local testing only)
-bash scripts/benchmark_run.sh ollama/qwen35-9b-clawd-v4 --no-upload
-```
-
-Logs saved to `$PBM_WORKSPACE/logs/bench_*.log` (persistent).
-
-```bash
-# Monitor live
-tail -f $PBM_WORKSPACE/logs/bench_ollama_qwen35-9b-clawd-v4.log
-
-# Service logs
-tail -f /tmp/openclaw-gateway.log
-tail -f /tmp/ollama.log
+Dockerfile.bench             # lightweight image: Ollama + OpenClaw only
 ```
 
 ---
@@ -414,21 +290,28 @@ tail -f /tmp/ollama.log
 
 ### Starting
 
+**Always run in tmux** so the loop survives SSH disconnects:
 ```bash
-cd /root/pbm   # or wherever you cloned the repo
+tmux new -s loop
 python3 loop.py run
+# Detach: Ctrl+B, D
+# Reattach: tmux attach -t loop
 ```
 
-**Resuming with an existing model** (seeds version number so TrainerAgent creates the right next version):
+**Resuming with an existing model:**
 ```bash
-python3 loop.py run --model qwen35-9b-clawd-v3
+python3 loop.py run --model qwen35-9b-clawd-v5
 ```
 
-**Seeding scores from an existing log** (skips re-running the benchmark):
+**Seeding scores directly** (skips re-running the benchmark):
 ```bash
-python3 loop.py run \
-  --model qwen35-9b-clawd-v3 \
-  --log $PBM_WORKSPACE/logs/bench_ollama_qwen35-9b-clawd-v3.log
+python3 loop.py run --model qwen35-9b-clawd-v5 --scores '{"task_00_sanity":1.0,...}'
+```
+
+**Seeding from a benchmark log:**
+```bash
+python3 loop.py run --model qwen35-9b-clawd-v5 \
+  --log $PBM_WORKSPACE/logs/bench_ollama_qwen35-9b-clawd-v5.log
 ```
 
 **Check status:**
@@ -439,156 +322,157 @@ python3 loop.py status
 ### Iteration flow
 
 ```
+Startup
+└── Model validation (cached after first run)
+
 Iteration N
-├── EvalAgent          — benchmark current model, parse scores
+├── EvalAgent          — benchmark current model, parse + archive scores
 │   └── Gate: regression > 5% below best ever → PAUSE
 │   └── Gate: score ≥ target → EXIT (done)
 │   └── Gate: no weak tasks → EXIT
 ├── EvalAnalysisAgent  — probe model versions, diagnose with Claude
-│   └── Gate: exception / empty / error summary / no findings → PAUSE
+│   └── Gate: exception / empty / error → PAUSE
 │       (training never proceeds without a real diagnosis)
-├── DataAgent          — topup weak tasks via Claude Batch API
+├── DataAgent          — score-proportional topup + adversarial generation
 │   └── Gate: 0 new examples → PAUSE
-├── CuratorAgent       — llm_judge score + filter
+├── CuratorAgent       — score → repair → filter → dedup → verify → HF push
 │   └── Gate: train.jsonl empty after curation → PAUSE
-└── TrainerAgent       — prepare → finetune → convert → register vN+1
-    └── Gate: GGUF not found / model not in ollama list → FAIL (exit 1)
+└── TrainerAgent       — validate model → prepare → finetune → convert → register
+    └── Gate: GGUF not found / model not in ollama list → FAIL
 ```
 
-All pause exits are code 3 (distinct from error = 1). State is saved at every gate — resume safely after fixing the issue.
+### Logs and debugging
 
-### Version tracking
+```bash
+# Live loop output (if running in tmux)
+tmux attach -t loop
 
-Each TrainerAgent run increments `model_version` and registers `{model_name}-v{N}` in Ollama. Previous versions remain registered so EvalAnalysisAgent can probe and compare behavior across versions.
+# Loop log file (always written, survives disconnects)
+tail -f $PBM_WORKSPACE/logs/loop.log
 
-When starting with `--model qwen35-9b-clawd-v3`, the loop parses `-v3` and sets `model_version = 3` internally, so the next fine-tune becomes v4. Without `--model`, the loop starts from v0 and will create v1.
+# Benchmark logs (archived per iteration, never overwritten)
+ls $PBM_WORKSPACE/logs/bench_v*_iter*.log
+
+# Raw Claude responses (for debugging JSON parse failures)
+ls $PBM_WORKSPACE/data/debug/
+
+# EvalAnalysis reports
+ls $PBM_WORKSPACE/data/eval_analysis_*.json
+
+# Service logs
+tail -f /tmp/ollama.log
+tail -f /tmp/openclaw-gateway.log
+```
 
 ---
 
-## Scripts Reference
+## Data Generation Pipeline
 
-### `startup.sh` — run every session
+Run locally (Anthropic Batch API is ~50% cheaper, no GPU needed).
 
-```bash
-bash /root/scripts/startup.sh   # if on RunPod (scripts are at /root/scripts)
-bash scripts/startup.sh         # if running locally from repo root
-```
-
-1. Sources API keys from `$PBM_WORKSPACE/set_env.sh`
-2. Clones repo to `/root/pbm` (or `git pull` if already present)
-3. Kills stale `ollama` and `openclaw` processes
-4. Generates `~/.openclaw/openclaw.json` from `openclaw_template.json` + env vars
-5. Starts Ollama, waits up to 30s
-6. Starts OpenClaw gateway on port 18789, waits up to 60s
-7. Auto-registers the fine-tuned model from `loop_state.json` (so you don't need to manually re-run `register_model.sh` after a pod restart)
-8. Prints health summary
-
-### `benchmark_run.sh`
+### 1. Generate initial data
 
 ```bash
-bash scripts/benchmark_run.sh ollama/qwen35-9b-clawd-v4              # run + upload to leaderboard
-bash scripts/benchmark_run.sh ollama/qwen35-9b-clawd-v4 --no-upload  # local test, no upload
+source /workspace/synthbench/set_env.sh
+python generate.py submit    # submit ~920 examples to Claude Batch API
+python generate.py status    # poll until complete
+python generate.py collect   # write train.jsonl + val.jsonl
 ```
 
-### `register_model.sh`
+### 2. Score and filter
 
 ```bash
-bash scripts/register_model.sh
-OLLAMA_MODEL=qwen35-9b-clawd-v4 bash scripts/register_model.sh
-GGUF_PATH=/custom/path.gguf bash scripts/register_model.sh
+python llm_judge.py run             # score all examples 1–5 (resumes if interrupted)
+python llm_judge.py report          # per-task score summary
+python llm_judge.py filter --min 3  # remove low-quality examples
 ```
 
-### `check_setup.sh`
+### 3. Inspect and validate
 
 ```bash
-bash scripts/check_setup.sh
+python inspect_data.py stats     # examples per task
+python inspect_data.py validate  # structural issues
+python inspect_data.py sample    # preview random examples
 ```
 
-Validates Ollama is running, OpenClaw gateway is running, all API keys are set, and Python packages are present. Run before every benchmark.
-
-### `train_and_eval.sh`
+### 4. Top up weak tasks
 
 ```bash
-OLLAMA_MODEL=qwen35-9b-clawd-v4 bash scripts/train_and_eval.sh
-NO_UPLOAD=1 bash scripts/train_and_eval.sh   # skip leaderboard upload
+python topup.py count   # show current vs target per task
+python topup.py run     # generate more for tasks below target
 ```
 
-Runs the full manual pipeline: prepare → finetune → convert → fix_modelfile → benchmark.
+---
+
+## Fine-Tuning Pipeline (Advanced / Manual)
+
+> **Normal path:** `python3 loop.py run` — TrainerAgent handles all of this automatically.
+
+```bash
+python -m stages.validate_model              # check base model is valid
+python -m stages.prepare                     # convert to SFT format
+python -m stages.finetune --dry-run          # sanity check
+python -m stages.finetune                    # 30–90 min on A100
+python -m stages.convert                     # merge + quantize to GGUF
+OLLAMA_MODEL=qwen35-9b-clawd-v6 bash scripts/register_model.sh
+bash scripts/benchmark_run.sh ollama/qwen35-9b-clawd-v6
+```
 
 ---
 
 ## Key Insights & Gotchas
 
-### 1. OpenRouter is required for benchmarking — Anthropic API alone is not enough
+### 1. Always run the loop in tmux
 
-The PinchBench judge uses Claude via **OpenRouter** (`OPENROUTER_API_KEY`). This is because the judge agent lives inside OpenClaw's configuration, not in this codebase. `ANTHROPIC_API_KEY` is only used by the data generation scripts in this repo.
-
-You need both keys for different things. Get an OpenRouter key at [openrouter.ai](https://openrouter.ai) and add credits (~$1–3 per benchmark run for judge calls).
-
-### 2. GGUF models need a custom Modelfile for tool calling
-
-A plain `ollama create FROM <gguf>` generates a minimal Modelfile without the `<tools>...</tools>` chat template block. Without it, the model silently ignores all tool calls and scores near 0% on PinchBench.
-
-`register_model.sh` fixes this by copying the full chat template from `qwen3:8b` (which ships with proper tool-call support) and pointing `FROM` at your fine-tuned GGUF. Always use `register_model.sh`, never plain `ollama create`.
-
-### 3. Node.js 22 is required for OpenClaw
-
-OpenClaw requires Node.js ≥22.12.0. Node 20 installs without error but OpenClaw fails at runtime. The `Dockerfile` explicitly installs Node 22 via nodesource. On an existing machine:
+The loop takes hours (fine-tuning + benchmarking per iteration). If your SSH disconnects, the process dies. Always use tmux:
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-apt-get install -y nodejs && npm install -g openclaw@latest
-openclaw --version
+tmux new -s loop
+python3 loop.py run
+# Ctrl+B, D to detach — tmux attach -t loop to reattach
 ```
 
-### 4. `~/.ollama` is ephemeral on cloud pods — models must re-register after restart
+### 2. OpenRouter is required for benchmarking
 
-Ollama's model registry (`~/.ollama`) lives on the container's ephemeral disk, not the network volume. The GGUF file is safe on the network volume, but `ollama list` will be empty after a restart. `startup.sh` handles re-registration automatically from `loop_state.json`.
+The PinchBench judge calls Claude via **OpenRouter** (`OPENROUTER_API_KEY`), not the Anthropic API. You need both keys for different things.
 
-### 5. `utils/config.py` is a loader for `config.yaml` — not a second config file
+### 3. GGUF models need `register_model.sh` for tool calling
 
-`config.yaml` is where you change settings. `utils/config.py` is Python code that reads `config.yaml` and exposes it as a typed object with computed properties (e.g. `cfg.gguf_file`). Never edit `utils/config.py` to change settings — edit `config.yaml`.
+A plain `ollama create FROM <gguf>` silently breaks tool calling. Always use `register_model.sh`.
 
-### 6. PYTHONPATH is set automatically — you don't need to prefix commands
+### 4. `~/.ollama` is ephemeral — models re-register after restart
 
-On cloud pods, `PYTHONPATH=/root/pbm` is set as a Docker `ENV` variable and also written to `~/.bashrc` by `startup.sh`. After running `startup.sh` (or in any new SSH session), all commands work without a prefix:
+`startup.sh` handles this automatically from `loop_state.json`.
+
+### 5. Source env files — never `sh`
 
 ```bash
-python3 loop.py run          # correct — PYTHONPATH already set
-PYTHONPATH=. python3 loop.py run  # unnecessary on the pod
+source /workspace/synthbench/set_env.sh    # correct
+sh /workspace/synthbench/set_env.sh        # WRONG
 ```
 
-If running locally without the Docker image, set it once:
-```bash
-cd /path/to/repo && export PYTHONPATH=$(pwd)
-```
+### 6. PYTHONPATH is set automatically after `startup.sh`
+
+No need to prefix commands. If running locally: `export PYTHONPATH=$(pwd)`
 
 ### 7. Model version numbers must be seeded when resuming
 
 ```bash
-python3 loop.py run --model qwen35-9b-clawd-v3
+python3 loop.py run --model qwen35-9b-clawd-v5
 ```
 
-Without `--model`, the loop starts from version 0 and TrainerAgent will create v1 even if v3 exists. The loop parses `-v3` from the model name and sets `model_version = 3` so the next fine-tune becomes v4.
+Without `--model`, the loop starts from v0.
 
 ### 8. Training is gated on a valid analysis
 
-Fine-tuning is expensive (~$10–30 in GPU time per run). The loop will not proceed to DataAgent or TrainerAgent unless `state.last_analysis` passes:
-- Non-empty output
-- `summary` does not start with `"Error:"`
-- At least one of `root_causes` or `data_fixes` is non-empty
+The loop pauses if EvalAnalysisAgent produces no root causes or data fixes. Check `data/debug/` for raw Claude responses.
 
-If analysis fails, the loop pauses with a clear message. Fix the issue (check `eval_analysis_*.json` in the data dir), then resume.
+### 9. Benchmark logs are archived per iteration
 
-### 9. Benchmark logs are saved to the network volume — never `/tmp`
+Each eval creates `bench_v{N}_iter{M}_{timestamp}.log` so no run overwrites another.
 
-Logs go to `$PBM_WORKSPACE/logs/bench_*.log`. They persist across pod restarts and can be used to seed the next loop run with `--log`. EvalAnalysisAgent also reads them for signal collection.
+### 10. Base model is validated at loop startup
 
-### 10. Source env files — never `sh`
-
-```bash
-source /workspace/synthbench/set_env.sh    # exports to current shell
-sh /workspace/synthbench/set_env.sh        # WRONG — subshell exits, nothing exported
-```
+`stages/validate_model.py` checks: HuggingFace existence, text-generation architecture, Unsloth support, tokenizer, VRAM estimate. Result is cached in state — only runs once per model.
 
 ---
 
@@ -597,10 +481,10 @@ sh /workspace/synthbench/set_env.sh        # WRONG — subshell exits, nothing e
 | Task | Name | External Dependency |
 |------|------|---------------------|
 | task_00 | sanity | none |
-| task_01 | calendar | none (creates .ics file) |
+| task_01 | calendar | none |
 | task_02 | stock | Brave web search |
 | task_03 | blog | none |
-| task_04 | weather | wttr.in (free, no key) |
+| task_04 | weather | wttr.in (free) |
 | task_05 | summary | none |
 | task_06 | events | Brave web search |
 | task_07 | email | none |
@@ -609,7 +493,7 @@ sh /workspace/synthbench/set_env.sh        # WRONG — subshell exits, nothing e
 | task_10 | workflow | none |
 | task_11 | config_update | none |
 | task_12 | skill_search | none |
-| task_13 | image_gen | OpenRouter (`OPENROUTER_API_KEY`) |
+| task_13 | image_gen | OpenRouter |
 | task_14 | humanizer | none |
 | task_15 | daily_summary | none |
 | task_16 | email_triage | none |
@@ -624,43 +508,18 @@ sh /workspace/synthbench/set_env.sh        # WRONG — subshell exits, nothing e
 
 ## Troubleshooting
 
-### OpenClaw gateway not starting
-```bash
-cat /tmp/openclaw-gateway.log
-```
-Common causes: `OPENCLAW_GATEWAY_TOKEN` not set, port 18789 already in use, Node 20 instead of Node 22.
-
-### Benchmark scores all 0.0 (tools not being called)
-The model is ignoring tool definitions. Almost always a Modelfile issue:
-```bash
-OLLAMA_MODEL=qwen35-9b-clawd-v4 bash scripts/register_model.sh
-bash test_tool_call.sh   # verify tool calls are emitted
-```
-
-### `ModuleNotFoundError: No module named 'utils'`
-```bash
-cd /root/pbm && python3 loop.py run
-```
-
-### `config.yaml not found`
-Scripts must run from the project root. `utils/config.py` walks up the directory tree for `config.yaml`.
-
-### `GGUF not found` during convert or register_model
-```bash
-python3 -c "from utils.config import load_config; print(load_config().gguf_file)"
-```
-Verify the path matches where Unsloth actually saved the GGUF. Unsloth saves to `{model_name}_merged_gguf/`, not the main output dir.
-
-### Loop created v1 instead of v4
-Always pass `--model` when resuming with an existing fine-tuned model:
-```bash
-python3 loop.py run --model qwen35-9b-clawd-v3
-```
-
-### Analysis JSON parse error
-```bash
-git -C /root/pbm pull   # fix was shipped in a recent commit
-```
+| Problem | Fix |
+|---------|-----|
+| Training dies on SSH disconnect | Run in `tmux new -s loop` |
+| OpenClaw gateway not starting | `cat /tmp/openclaw-gateway.log` — check Node.js version (needs 22) |
+| Benchmark scores all 0.0 | `OLLAMA_MODEL=... bash scripts/register_model.sh` |
+| `ModuleNotFoundError: No module named 'utils'` | `cd /root/pbm` (PYTHONPATH must be project root) |
+| `config.yaml not found` | Run from project root (`/root/pbm`) |
+| `GGUF not found` | `python3 -c "from utils.config import load_config; print(load_config().gguf_file)"` |
+| Loop created v1 instead of v6 | Pass `--model qwen35-9b-clawd-v5` when resuming |
+| Analysis JSON parse error | Check `$PBM_WORKSPACE/data/debug/` for raw response |
+| Pod crash-loops on start | Container starts idle; run `bash /root/scripts/startup.sh` manually |
+| `source` vs `sh` for env files | Always `source`, never `sh` |
 
 ---
 
@@ -671,79 +530,70 @@ git -C /root/pbm pull   # fix was shipped in a recent commit
 | `$PBM_WORKSPACE/data/train.jsonl` | Training data |
 | `$PBM_WORKSPACE/data/val.jsonl` | Validation data |
 | `$PBM_WORKSPACE/data/scores.json` | LLM judge scores |
-| `$PBM_WORKSPACE/data/loop_state.json` | Agentic loop state (persisted) |
+| `$PBM_WORKSPACE/data/loop_state.json` | Agentic loop state |
+| `$PBM_WORKSPACE/data/current_diagnosis.json` | Per-task diagnosis from latest analysis |
 | `$PBM_WORKSPACE/data/eval_analysis_*.json` | Per-iteration diagnosis reports |
-| `$PBM_WORKSPACE/logs/bench_*.log` | Benchmark logs (persisted) |
-| `$PBM_WORKSPACE/{model_name}_merged_gguf/` | GGUF files |
-| `$PBM_WORKSPACE/skill/` | PinchBench benchmark scripts |
+| `$PBM_WORKSPACE/data/debug/` | Raw Claude responses for debugging |
+| `$PBM_WORKSPACE/data/dedup_report.json` | Deduplication stats |
+| `$PBM_WORKSPACE/data/repair_report.json` | Example repair stats |
+| `$PBM_WORKSPACE/data/adversarial_results.json` | Adversarial generation stats |
+| `$PBM_WORKSPACE/logs/loop.log` | Unified agent log (timestamped) |
+| `$PBM_WORKSPACE/logs/bench_v*_iter*.log` | Archived benchmark logs (per iteration) |
+| `$PBM_WORKSPACE/logs/bench_*.log` | Latest benchmark log (per model) |
 | `~/.openclaw/openclaw.json` | Generated OpenClaw config |
-| `/tmp/openclaw-gateway.log` | OpenClaw gateway logs (ephemeral) |
 | `/tmp/ollama.log` | Ollama logs (ephemeral) |
+| `/tmp/openclaw-gateway.log` | OpenClaw gateway logs (ephemeral) |
+| `/root/pbm/` | Project code (cloned by startup.sh) |
 
 ---
 
 ## Roadmap
 
-- **Apple Silicon support** — test and validate the full pipeline on Mac (M1/M2/M3/M4). Unsloth has experimental MPS support; the training stages use standard HuggingFace/TRL primitives.
-- **Multi-model support** — the pipeline currently targets Qwen3.5-9B. We want to make it easy to swap in other base models (Llama, Mistral, Phi, Gemma, etc.).
-- **Smarter data generation** — use EvalAnalysisAgent's diagnosis to not just topup weak tasks, but rewrite bad examples and generate adversarial variants.
-- **Parallel benchmarking** — run eval against multiple model versions simultaneously to speed up the loop.
+- **Apple Silicon support** — test and validate the full pipeline on Mac (M1/M2/M3/M4)
+- **Multi-model support** — easy swap to Llama, Mistral, Phi, Gemma (see Contributing below)
+- **Parallel benchmarking** — eval multiple model versions simultaneously
+- **Curriculum learning** — weight harder tasks more during training
+- **Cross-iteration dedup** — track example hashes across all iterations to prevent drift
 
 ---
 
 ## Contributing: Adding Support for Other Models
 
-The pipeline is designed around Qwen3.5-9B, but adding a new base model is straightforward. Here's what to change:
+The pipeline is designed around Qwen3.5-9B, but adding a new base model is straightforward:
 
 ### 1. `config.yaml` — point to the new model
 
 ```yaml
 model:
-  base: mistralai/Mistral-7B-v0.3   # HuggingFace model ID
-  name: mistral-7b-clawd             # used for output dirs + Ollama model name
+  base: mistralai/Mistral-7B-v0.3
+  name: mistral-7b-clawd
 ```
 
-All derived paths (`adapter_dir`, `merged_dir`, `gguf_dir`, `gguf_file`) update automatically.
+### 2. Validate the model
 
-### 2. `stages/finetune.py` — verify compatibility
+```bash
+python -m stages.validate_model --model mistralai/Mistral-7B-v0.3
+```
 
-Unsloth supports a wide range of models (Llama, Mistral, Phi, Gemma, Qwen, etc.). The fine-tuning stage uses `FastLanguageModel.from_pretrained()` which handles most architectures automatically. You may need to adjust:
-
-- `max_seq_len` in `config.yaml` — some models support longer contexts
-- LoRA `target_modules` — Unsloth auto-detects these, but verify for your architecture
-- Chat template — Unsloth applies the model's native template; verify it produces correct `<tool_call>` formatting
+This checks HuggingFace existence, architecture, Unsloth support, tokenizer, and VRAM estimate.
 
 ### 3. `scripts/register_model.sh` — update the Modelfile template
 
-This is the critical step. The current Modelfile template is Qwen3-specific (uses `<|im_start|>`/`<|im_end|>` tokens and a Qwen-specific `<tools>` block). For a different model family:
-
-1. Pull the base model in Ollama: `ollama pull mistral:7b`
+The current template is Qwen3-specific. For a different model family:
+1. Pull the base model: `ollama pull mistral:7b`
 2. Export its Modelfile: `ollama show mistral:7b --modelfile`
-3. Verify it includes tool-call support (the `{{- if .Tools }}` template block)
-4. Update `register_model.sh` to use the new model's chat template instead of copying from `qwen3:8b`
+3. Verify tool-call support (`{{- if .Tools }}` template block)
+4. Update `register_model.sh` to use the new template
 
-Without the correct Modelfile template, tool calling will silently fail and benchmark scores will be near zero.
-
-### 4. `openclaw_template.json` — update the default model reference
-
-The template uses `ollama/__MODEL_NAME__:latest` which is injected by `startup.sh`. No changes needed unless your model requires different inference parameters (temperature, top_k, etc.).
-
-### 5. Training data — the dataset is model-agnostic
-
-The synthetic training data (`train.jsonl`) uses a generic chat format with tool calls. `stages/prepare.py` converts it to the target model's SFT format using HuggingFace's chat template. The same dataset should work across model families — the SFT conversion handles the format differences.
-
-### What to validate
-
-After making these changes, run through the pipeline manually once before using the agentic loop:
+### 4. Test end-to-end
 
 ```bash
-python -m stages.finetune --dry-run   # verify model loads and config is valid
-python -m stages.finetune             # full training run
-python -m stages.convert              # GGUF conversion
-bash scripts/register_model.sh        # Ollama registration with correct template
-bash test_tool_call.sh                # verify tool calls are emitted
-bash scripts/benchmark_run.sh ollama/mistral-7b-clawd --no-upload  # sanity benchmark
+python -m stages.finetune --dry-run
+python -m stages.finetune
+python -m stages.convert
+bash scripts/register_model.sh
+bash test_tool_call.sh
+bash scripts/benchmark_run.sh ollama/mistral-7b-clawd --no-upload
 ```
 
-If you get it working with a new model, please open a PR. We'd love to expand the set of supported architectures.
-| `/root/pbm/` | Project code (cloned by startup.sh) |
+If you get it working, please open a PR.
