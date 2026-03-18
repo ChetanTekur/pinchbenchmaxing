@@ -48,57 +48,73 @@ class DataAgent(Agent):
         else:
             self.log("No diagnosis available — falling back to plain topup")
 
-        # ── Classify tasks by generation strategy ──────────────────────────
-        # ALL weak tasks get targeted topup (volume).
-        # Tasks that scored 0 or are marked "regenerate" ALSO get adversarial
-        # (failure-aware examples from benchmark transcripts).
-        tasks_topup = list(state.weak_tasks)  # every weak task gets topup
-        tasks_adversarial = []
+        # ── Compute per-task example counts (score-proportional decay) ────
+        target_score = cfg.loop.target_score
+        try:
+            max_per_task = cfg.loop.max_examples_per_task
+        except AttributeError:
+            max_per_task = 100
+        try:
+            total_cap = cfg.loop.total_new_examples_cap
+        except AttributeError:
+            total_cap = 500
 
-        for task in state.weak_tasks:
-            if self._needs_adversarial(task, state):
-                tasks_adversarial.append(task)
+        task_counts = self._compute_per_task_counts(
+            state.weak_tasks, state.scores, target_score, max_per_task, total_cap
+        )
 
-        # ── Execute strategies ─────────────────────────────────────────────
+        self.log(f"\n  Score-proportional generation plan:")
+        total_planned = 0
+        for task, n in sorted(task_counts.items()):
+            score = state.scores.get(task, 0.0)
+            self.log(f"    {task}: score={score:.2f} → {n} new examples")
+            total_planned += n
+        self.log(f"  Total: {total_planned} (cap: {total_cap})")
 
-        # Strategy 1: Targeted topup (diagnosis-aware)
-        if tasks_topup:
-            min_per_task = cfg.loop.examples_per_weak_task
-            self.log(f"\n[TARGETED TOPUP] {len(tasks_topup)} tasks "
-                     f"(min {min_per_task} new examples each)")
+        # ── Classify adversarial tasks ─────────────────────────────────────
+        tasks_adversarial = [t for t in state.weak_tasks
+                             if self._needs_adversarial(t, state)]
+
+        # ── Execute: targeted topup (all weak tasks, score-proportional) ───
+        if task_counts:
+            self.log(f"\n[TARGETED TOPUP] {len(task_counts)} tasks")
             script = str(_PROJECT_ROOT / "targeted_topup.py")
-            rc = self.run_cmd(
-                [sys.executable, script, "run",
-                 "--diagnosis-file", str(diag_file),
-                 "--tasks", ",".join(tasks_topup),
-                 "--min-per-task", str(min_per_task)],
-                check=False,
-            )
-            if rc == 2:
-                self.log("All topup tasks already at target count.")
-            elif rc != 0:
-                raise subprocess.CalledProcessError(rc, ["targeted_topup.py"])
 
-        # Strategy 2: Adversarial generation from benchmark transcripts
+            # Pass each task with its specific count via the per-task mechanism
+            # Use the max count as --min-per-task since we call per-task
+            for task, n in task_counts.items():
+                self.log(f"  {task}: generating {n} examples")
+                rc = self.run_cmd(
+                    [sys.executable, script, "run",
+                     "--diagnosis-file", str(diag_file),
+                     "--tasks", task,
+                     "--min-per-task", str(n)],
+                    check=False,
+                )
+                if rc not in (0, 2):
+                    self.log(f"  WARNING: targeted_topup for {task} exited {rc}")
+
+        # ── Execute: adversarial (score-0 and regenerate tasks) ────────────
         if tasks_adversarial:
             self.log(f"\n[ADVERSARIAL] {len(tasks_adversarial)} tasks")
             log_dir = cfg.data_dir.parent / "logs"
             script = str(_PROJECT_ROOT / "adversarial_gen.py")
 
-            try:
-                n_per_task = cfg.data.adversarial_examples_per_task
-            except AttributeError:
-                n_per_task = 10  # default: 10 adversarial examples per failed task
-
-            rc = self.run_cmd(
-                [sys.executable, script, "run",
-                 "--log-dir", str(log_dir),
-                 "--tasks", ",".join(tasks_adversarial),
-                 "--n-per-task", str(n_per_task)],
-                check=False,
-            )
-            if rc != 0:
-                self.log(f"WARNING: adversarial generation exited {rc} (non-fatal)")
+            # Adversarial count also scales with gap, capped at 15
+            for task in tasks_adversarial:
+                score = state.scores.get(task, 0.0)
+                gap = max(0, target_score - score)
+                n_adv = max(3, min(15, round(15 * gap / target_score)))
+                self.log(f"  {task}: {n_adv} adversarial examples")
+                rc = self.run_cmd(
+                    [sys.executable, script, "run",
+                     "--log-dir", str(log_dir),
+                     "--tasks", task,
+                     "--n-per-task", str(n_adv)],
+                    check=False,
+                )
+                if rc != 0:
+                    self.log(f"  WARNING: adversarial for {task} exited {rc} (non-fatal)")
 
         return state
 
@@ -132,6 +148,39 @@ class DataAgent(Agent):
             result[task].setdefault("root_cause", note)
 
         return result
+
+    def _compute_per_task_counts(
+        self, weak_tasks: list, scores: dict,
+        target_score: float, max_per_task: int, total_cap: int,
+    ) -> dict[str, int]:
+        """
+        Compute how many new examples each weak task should get.
+
+        Score-proportional decay:
+          n = max_per_task × (gap / target)
+
+        A task at 0% gets max_per_task (100).
+        A task at 40% gets ~53.
+        A task at 70% gets ~18.
+        A task at 85% (target) gets 0.
+
+        Total is capped at total_cap. If the sum exceeds the cap,
+        all counts are scaled down proportionally (preserving relative allocation).
+        """
+        raw_counts = {}
+        for task in weak_tasks:
+            score = scores.get(task, 0.0)
+            gap = max(0, target_score - score)
+            n = round(max_per_task * (gap / target_score))
+            raw_counts[task] = max(5, n)  # floor of 5 — always worth generating something
+
+        # Apply total cap
+        total = sum(raw_counts.values())
+        if total > total_cap and total > 0:
+            scale = total_cap / total
+            raw_counts = {t: max(3, round(n * scale)) for t, n in raw_counts.items()}
+
+        return raw_counts
 
     def _needs_adversarial(self, task: str, state: AgentState) -> bool:
         """Should this task also get adversarial examples (in addition to topup)?"""
