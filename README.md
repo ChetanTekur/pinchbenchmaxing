@@ -100,32 +100,49 @@ State is saved after every stage. Pod crashes mid-run? Resume with the same comm
 
 ## Quick Start
 
+### One-time setup (on the pod)
+
 ```bash
-# 1. Clone the repo
-git clone https://github.com/ChetanTekur/pinchbenchmaxing && cd pinchbenchmaxing
+# 1. Start a pod with ghcr.io/chetantekur/pinchbenchmaxing:latest (see GPU Options)
+#    The container starts idle. SSH in, then:
 
-# 2. Fill in API keys — copy template to persistent storage and edit
-cp scripts/set_env.sh /workspace/synthbench/set_env.sh
-vim /workspace/synthbench/set_env.sh
+# 2. Run startup — clones repo, starts Ollama + OpenClaw
+bash /root/scripts/startup.sh
 
-# 3. Start services (sources set_env.sh, starts Ollama + OpenClaw)
-bash scripts/startup.sh
+# 3. Set up API keys (one time — persists on network volume)
+cp /root/pbm/scripts/set_env.sh /workspace/synthbench/set_env.sh
+vim /workspace/synthbench/set_env.sh   # fill in all keys
+source /workspace/synthbench/set_env.sh
 
-# 4. Register with PinchBench (one time only)
+# 4. Register with PinchBench (one time)
 cd $PBM_WORKSPACE/skill && bash scripts/run.sh --register && cd -
 
-# 5. Generate initial training data (cheapest to run locally)
-source /workspace/synthbench/set_env.sh
+# 5. Generate initial training data
+cd /root/pbm
 python generate.py submit && python generate.py status && python generate.py collect
 python llm_judge.py run && python llm_judge.py filter --min 3
-
-# 6. Run the agentic loop in tmux (survives SSH disconnects)
-tmux new -s loop
-python3 loop.py run
-# Detach: Ctrl+B, D — reattach: tmux attach -t loop
 ```
 
-That's it. The loop evaluates, diagnoses, generates data, curates, and trains — uploading results to PinchBench automatically on each iteration.
+### Run the agentic loop
+
+```bash
+# Always run in tmux so it survives SSH disconnects
+cd /root/pbm
+tmux new -s loop
+python3 loop.py run
+# Detach: Ctrl+B, D — reattach later: tmux attach -t loop
+```
+
+### On pod restart
+
+```bash
+bash /root/scripts/startup.sh    # re-starts Ollama + OpenClaw, re-registers model
+cd /root/pbm
+tmux new -s loop
+python3 loop.py run              # resumes from saved state automatically
+```
+
+That's it. The loop evaluates, diagnoses, generates targeted data, curates, trains, and repeats.
 
 ---
 
