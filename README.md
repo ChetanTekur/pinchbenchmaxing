@@ -116,11 +116,6 @@ source /workspace/synthbench/set_env.sh
 
 # 4. Register with PinchBench (one time)
 cd $PBM_WORKSPACE/skill && bash scripts/run.sh --register && cd -
-
-# 5. Generate initial training data
-cd /root/pbm
-python generate.py submit && python generate.py status && python generate.py collect
-python llm_judge.py run && python llm_judge.py filter --min 3
 ```
 
 ### Run the agentic loop
