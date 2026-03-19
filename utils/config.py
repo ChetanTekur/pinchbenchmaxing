@@ -81,7 +81,8 @@ class Config:
 
     @property
     def model_name(self) -> str:
-        return self._data["model"]["name"]
+        """Model name — override with PBM_MODEL_NAME env var for versioned checkpoints."""
+        return os.environ.get("PBM_MODEL_NAME", self._data["model"]["name"])
 
     @property
     def base_model(self) -> str:

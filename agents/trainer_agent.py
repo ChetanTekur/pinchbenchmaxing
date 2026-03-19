@@ -28,16 +28,25 @@ class TrainerAgent(Agent):
     def run(self, state: AgentState, cfg) -> AgentState:
         # ── Determine next version ────────────────────────────────────────────
         next_version    = state.model_version + 1
-        versioned_name  = f"{cfg.ollama_model_name}-v{next_version}"
-        self.log(f"Training v{next_version} → will register as '{versioned_name}'")
+        base_name       = cfg._data["model"]["name"]  # unversioned base name
+        versioned_name  = f"{base_name}-v{next_version}"
+        self.log(f"Training v{next_version} → checkpoints as '{versioned_name}', "
+                 f"Ollama as '{versioned_name}'")
 
-        # ── Run prepare → finetune → convert ─────────────────────────────────
+        # ── Run prepare → finetune → convert with versioned model name ───────
+        # PBM_MODEL_NAME overrides cfg.model_name so all derived paths
+        # (adapter_dir, merged_dir, gguf_dir) include the version number.
+        # e.g. qwen35-9b-clawd-v7_merged instead of qwen35-9b-clawd_merged
+        import os
+        os.environ["PBM_MODEL_NAME"] = versioned_name
         for label, build_cmd in self._STAGES:
             self.log(f"Stage: {label}")
             self.run_cmd(build_cmd(sys.executable, cfg))
-
         # ── Gate: GGUF must exist after convert ───────────────────────────────
+        # cfg.gguf_file still reads PBM_MODEL_NAME from env (set above)
         gguf = cfg.gguf_file
+        del os.environ["PBM_MODEL_NAME"]  # clean up after all stages + gate
+
         if not gguf.exists():
             raise RuntimeError(
                 f"Convert stage completed but GGUF not found at {gguf}. "
@@ -50,7 +59,7 @@ class TrainerAgent(Agent):
         fix_script = Path(__file__).parent.parent / "scripts" / "register_model.sh"
         self.run_cmd(
             ["bash", str(fix_script)],
-            env={"OLLAMA_MODEL": versioned_name},
+            env={"OLLAMA_MODEL": versioned_name, "GGUF_PATH": str(gguf)},
         )
 
         # ── Gate: verify model is registered ─────────────────────────────────
