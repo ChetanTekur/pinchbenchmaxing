@@ -25,7 +25,7 @@ import anthropic
 
 from utils.config import load_config
 from utils.prompts import OPENCLAW_SYSTEM
-from topup import TASKS, parse_example, extract_json_array
+from datagen.topup import TASKS, parse_example, extract_json_array
 
 _cfg       = load_config()
 DATA_DIR   = _cfg.data_dir

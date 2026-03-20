@@ -266,7 +266,7 @@ class EvalAnalysisAgent(Agent):
     def _sig_dataset(self, cfg) -> dict:
         try:
             out = subprocess.check_output(
-                [sys.executable, "inspect_data.py", "stats"],
+                [sys.executable, "-m", "datagen.inspect_data", "stats"],
                 stderr=subprocess.DEVNULL, timeout=30, text=True
             )
             by_task: dict[str, int] = {}
@@ -282,7 +282,7 @@ class EvalAnalysisAgent(Agent):
     def _sig_validation(self, cfg) -> dict:
         try:
             out = subprocess.check_output(
-                [sys.executable, "inspect_data.py", "validate"],
+                [sys.executable, "-m", "datagen.inspect_data", "validate"],
                 stderr=subprocess.DEVNULL, timeout=90, text=True
             )
             by_type: dict[str, int] = {}

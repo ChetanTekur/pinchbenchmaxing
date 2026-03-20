@@ -30,7 +30,7 @@ class CuratorAgent(Agent):
 
         # ── 1. Score ───────────────────────────────────────────────────────
         self.log("Scoring all examples...")
-        judge = str(_PROJECT_ROOT / "llm_judge.py")
+        judge = str(_PROJECT_ROOT / "datagen" / "llm_judge.py")
         self.run_cmd([sys.executable, judge, "run"])
 
         if not scores_file.exists():
@@ -41,7 +41,7 @@ class CuratorAgent(Agent):
         self.log(f"  Scores saved to {scores_file}")
 
         # ── 2. Repair ─────────────────────────────────────────────────────
-        repair_script = _PROJECT_ROOT / "example_repair.py"
+        repair_script = _PROJECT_ROOT / "datagen" / "example_repair.py"
         if repair_script.exists():
             self.log("Repairing borderline examples (score 2-3)...")
             rc = self.run_cmd(
@@ -64,7 +64,7 @@ class CuratorAgent(Agent):
         self.run_cmd([sys.executable, judge, "filter", "--min", str(min_score)])
 
         # ── 4. Dedup ──────────────────────────────────────────────────────
-        dedup_script = _PROJECT_ROOT / "dedup.py"
+        dedup_script = _PROJECT_ROOT / "datagen" / "dedup.py"
         if dedup_script.exists():
             self.log("Deduplicating similar examples...")
             rc = self.run_cmd(

@@ -24,7 +24,7 @@ import anthropic
 
 from utils.config import load_config
 from utils.prompts import OPENCLAW_SYSTEM
-from topup import (
+from datagen.topup import (
     TASKS, VARIATION_CONFIGS, HARD_TASKS,
     _epc, count_existing, compute_deficits,
     parse_example, extract_json_array,

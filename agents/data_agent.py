@@ -73,7 +73,7 @@ class DataAgent(Agent):
         # ── Strategy 1: Targeted topup ─────────────────────────────────────
         if task_counts:
             self.log(f"Running targeted topup for {len(task_counts)} tasks...")
-            script = str(_PROJECT_ROOT / "targeted_topup.py")
+            script = str(_PROJECT_ROOT / "datagen" / "targeted_topup.py")
             for task, n in task_counts.items():
                 self.log(f"  [topup] {task}: {n} examples")
                 rc = self.run_cmd(
@@ -90,7 +90,7 @@ class DataAgent(Agent):
         if tasks_adversarial:
             self.log(f"Running adversarial generation for {len(tasks_adversarial)} tasks...")
             log_dir = cfg.data_dir.parent / "logs"
-            script = str(_PROJECT_ROOT / "adversarial_gen.py")
+            script = str(_PROJECT_ROOT / "datagen" / "adversarial_gen.py")
 
             for task in tasks_adversarial:
                 score = state.scores.get(task, 0.0)

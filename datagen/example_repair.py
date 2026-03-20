@@ -119,7 +119,7 @@ def repair_example(
 def score_example(client: anthropic.Anthropic, example: dict) -> dict | None:
     """Quick-score a single example using the same approach as llm_judge."""
     try:
-        from llm_judge import build_judge_prompt
+        from datagen.llm_judge import build_judge_prompt
     except ImportError:
         return None
 
