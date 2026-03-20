@@ -256,23 +256,23 @@ class Agent(ABC):
 
     def run_cmd(self, cmd: list[str], env: dict | None = None,
                 check: bool = True) -> int:
-        """Run a subprocess, capturing all output to both stdout and log file."""
+        """Run a subprocess, streaming output line-by-line to stdout and log file."""
         merged = {**os.environ, **(env or {})}
         self.log(f"$ {' '.join(cmd)}")
-        result = subprocess.run(
+        proc = subprocess.Popen(
             cmd, env=merged,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True,
+            text=True, bufsize=1,  # line-buffered
         )
-        # Stream output line by line to both stdout and log file
-        if result.stdout:
-            for line in result.stdout.splitlines():
-                print(f"    {line}", flush=True)
-                _write_log(f"    {line}")
-        if check and result.returncode != 0:
-            self.log(f"Command exited with code {result.returncode}")
-            raise subprocess.CalledProcessError(result.returncode, cmd)
-        return result.returncode
+        for line in proc.stdout:
+            line = line.rstrip('\n')
+            print(f"    {line}", flush=True)
+            _write_log(f"    {line}")
+        proc.wait()
+        if check and proc.returncode != 0:
+            self.log(f"Command exited with code {proc.returncode}")
+            raise subprocess.CalledProcessError(proc.returncode, cmd)
+        return proc.returncode
 
     def __repr__(self) -> str:
         return f"<Agent:{self.name}>"
