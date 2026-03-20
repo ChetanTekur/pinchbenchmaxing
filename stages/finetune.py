@@ -22,6 +22,38 @@ def load_jsonl(path: Path) -> list[dict]:
     return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
 
 
+def auto_batch_size(config_batch: int, model_vram_gb: float = 15.0) -> tuple[int, int]:
+    """
+    Maximize batch size based on available GPU VRAM.
+    Returns (batch_size, grad_accum) targeting effective batch ~32.
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            total_vram = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+            free_vram = total_vram - model_vram_gb  # rough estimate after model load
+
+            # Scale batch size with available VRAM
+            # ~2 GB per batch item for 9B model with LoRA
+            max_batch = max(2, int(free_vram / 2))
+            # Cap at 32 (diminishing returns beyond this)
+            batch_size = min(max_batch, 32)
+            # Adjust grad_accum to keep effective batch ~32
+            effective_target = 32
+            grad_accum = max(1, effective_target // batch_size)
+
+            print(f"GPU        : {torch.cuda.get_device_name(0)}")
+            print(f"VRAM       : {total_vram:.0f} GB total, ~{free_vram:.0f} GB available for batching")
+            print(f"Batch size : {config_batch} (config) → {batch_size} (auto-optimized)")
+            print(f"Grad accum : {grad_accum} (effective batch = {batch_size * grad_accum})")
+            return batch_size, grad_accum
+    except Exception:
+        pass
+
+    print(f"Batch size : {config_batch} (config, no GPU detected for auto-tuning)")
+    return config_batch, 4
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config",  default=None)
@@ -36,6 +68,9 @@ def main():
     print(f"Output     : {cfg.adapter_dir}")
     print(f"Train data : {cfg.train_sft_file}")
     print(f"Val data   : {cfg.val_sft_file}")
+
+    # Auto-maximize batch size based on hardware
+    batch_size, grad_accum = auto_batch_size(int(t["batch_size"]))
     print()
 
     for path in [cfg.train_sft_file, cfg.val_sft_file]:
@@ -100,9 +135,9 @@ def main():
     training_args = SFTConfig(
         output_dir                  =str(cfg.adapter_dir),
         num_train_epochs            =int(t["epochs"]),
-        per_device_train_batch_size =int(t["batch_size"]),
-        per_device_eval_batch_size  =int(t["batch_size"]),
-        gradient_accumulation_steps =int(t["grad_accum"]),
+        per_device_train_batch_size =batch_size,
+        per_device_eval_batch_size  =batch_size,
+        gradient_accumulation_steps =grad_accum,
         learning_rate               =float(t["learning_rate"]),
         lr_scheduler_type           =str(t["lr_scheduler"]),
         warmup_ratio                =float(t["warmup_ratio"]),
