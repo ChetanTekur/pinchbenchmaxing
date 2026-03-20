@@ -6,6 +6,16 @@ A Claude-powered **orchestrator** examines the current state, decides what to do
 
 Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch): give an AI system a metric to optimize and let it drive the improvement cycle.
 
+| Karpathy autoresearch | PinchBench Maxing |
+|---|---|
+| Single agent modifies `train.py` | Claude orchestrator calls 19 tools |
+| Agent modifies training code | Orchestrator modifies training *data* |
+| Fixed 5-min experiment budget | Budget-capped sessions ($25 default) |
+| Metric: val bits-per-byte | Metric: PinchBench score (0–23 tasks) |
+| Runs overnight on a single GPU | Runs overnight on a single GPU |
+| Agent reads eval output, iterates | `diagnose` tool uses Claude to *reason* about failures |
+| `program.md` guides the agent | `prompts/orchestrator.md` guides the orchestrator |
+
 ---
 
 ## Results
