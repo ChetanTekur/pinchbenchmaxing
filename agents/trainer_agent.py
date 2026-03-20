@@ -30,8 +30,7 @@ class TrainerAgent(Agent):
         next_version    = state.model_version + 1
         base_name       = cfg._data["model"]["name"]  # unversioned base name
         versioned_name  = f"{base_name}-v{next_version}"
-        self.log(f"Training v{next_version} → checkpoints as '{versioned_name}', "
-                 f"Ollama as '{versioned_name}'")
+        self.log(f"Training v{next_version}: {versioned_name}")
 
         # ── Run prepare → finetune → convert with versioned model name ───────
         # PBM_MODEL_NAME overrides cfg.model_name so all derived paths
@@ -40,7 +39,7 @@ class TrainerAgent(Agent):
         import os
         os.environ["PBM_MODEL_NAME"] = versioned_name
         for label, build_cmd in self._STAGES:
-            self.log(f"Stage: {label}")
+            self.log(f"  [{label}] running...")
             self.run_cmd(build_cmd(sys.executable, cfg))
         # ── Gate: GGUF must exist after convert ───────────────────────────────
         # cfg.gguf_file still reads PBM_MODEL_NAME from env (set above)
@@ -52,10 +51,10 @@ class TrainerAgent(Agent):
                 f"Convert stage completed but GGUF not found at {gguf}. "
                 "Check convert stage logs."
             )
-        self.log(f"GGUF verified: {gguf} ({gguf.stat().st_size // 1024 // 1024} MB)")
+        self.log(f"  GGUF: {gguf} ({gguf.stat().st_size // 1024 // 1024} MB)")
 
         # ── Register versioned model in Ollama ────────────────────────────────
-        self.log(f"Registering '{versioned_name}' in Ollama via register_model.sh ...")
+        self.log(f"Registering {versioned_name} in Ollama...")
         fix_script = Path(__file__).parent.parent / "scripts" / "register_model.sh"
         self.run_cmd(
             ["bash", str(fix_script)],
@@ -67,8 +66,8 @@ class TrainerAgent(Agent):
 
         # ── Record in state ───────────────────────────────────────────────────
         state.record_model(next_version, versioned_name)
-        self.log(f"Model v{next_version} ready in Ollama as '{versioned_name}'")
-        self.log(f"All versions: {[h['ollama_name'] for h in state.model_history]}")
+        self.log(f"Done: {versioned_name} registered in Ollama")
+        self.log(f"  All versions: {[h['ollama_name'] for h in state.model_history]}")
         return state
 
     def _verify_ollama_model(self, model_name: str) -> None:

@@ -117,7 +117,7 @@ class EvalAnalysisAgent(Agent):
 
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            self.log("ANTHROPIC_API_KEY not set — skipping analysis (non-fatal)")
+            self.log("ANTHROPIC_API_KEY not set — skipping")
             return state
 
         client = anthropic.Anthropic(api_key=api_key)
@@ -125,7 +125,7 @@ class EvalAnalysisAgent(Agent):
         # ── Discover all available model versions ─────────────────────────────
         models = self._discover_models(cfg, state)
         if not models:
-            self.log("No model versions found in Ollama — skipping analysis")
+            self.log("No model versions found in Ollama — skipping")
             return state
 
         self.log(f"Models to probe ({len(models)}): {[m['label'] for m in models]}")
@@ -244,7 +244,7 @@ class EvalAnalysisAgent(Agent):
     # ── Signal Collection ─────────────────────────────────────────────────────
 
     def _collect_signals(self, cfg, state: AgentState, models: list[dict]) -> dict:
-        self.log("Collecting signals...")
+        self.log("Collecting signals from dataset, judge, logs...")
         signals = {
             "model_history":   state.model_history,
             "current_version": state.model_version,
@@ -728,7 +728,7 @@ Return ONLY a valid JSON array with status field added:
     # ── Final Diagnosis ───────────────────────────────────────────────────────
 
     def _final_diagnosis(self, client, signals, state, hypotheses, probes) -> dict:
-        self.log("Generating final diagnosis...")
+        self.log("Generating final diagnosis with Claude...")
         prompt = f"""Final regression diagnosis for Clawd fine-tuning project.
 
 ## Confirmed/Unclear Hypotheses
