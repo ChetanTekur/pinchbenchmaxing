@@ -39,7 +39,7 @@ def auto_batch_size(config_batch: int, model_vram_gb: float = 15.0) -> tuple[int
 
             # Conservative: 4 GB per batch item avoids gradient offloading
             # Use only 60% of free VRAM to leave headroom
-            usable_vram = free_vram * 0.6
+            usable_vram = free_vram * 0.8
             max_batch = max(2, int(usable_vram / 4))
             # Cap at 16 — beyond this, offloading kicks in on most GPUs
             batch_size = min(max_batch, 16)
