@@ -1,23 +1,13 @@
 #!/usr/bin/env bash
 # Register a fine-tuned GGUF model in Ollama with correct chat template and tool support
 #
-# WHY THIS SCRIPT EXISTS:
-#   When you convert a fine-tuned model to GGUF and register it with ollama, the
-#   default Modelfile template does NOT include the <tools>...</tools> block needed
-#   for function/tool calling. Without this, OpenClaw's tool calls are silently
-#   ignored and the model never invokes any tools — causing near-zero benchmark scores.
+# Dynamically extracts the Modelfile template from the base Ollama model
+# (e.g. gemma3:1b, qwen3:8b) so it works with any model family.
 #
-#   This script regenerates the Modelfile by copying the full chat template from the
-#   base qwen3:8b model (which ollama ships with proper tool-call support), then
-#   pointing FROM at the fine-tuned GGUF file. Re-creating the model with this fixed
-#   Modelfile restores full tool-calling capability for the fine-tuned weights.
-#
-# All values are derived from config.yaml via utils/config.py — nothing is hardcoded.
-# Override individual values with env vars: GGUF_PATH, OLLAMA_MODEL.
+# Override values with env vars: GGUF_PATH, OLLAMA_MODEL, BASE_OLLAMA_MODEL.
 
 set -euo pipefail
 
-# Always run from project root so config.yaml and utils/ are found
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR/.."
 cd "$PROJECT_ROOT"
@@ -26,6 +16,28 @@ export PYTHONPATH="$PROJECT_ROOT"
 # ── Derive paths from config ──────────────────────────────────────────────────
 GGUF_PATH="${GGUF_PATH:-$(python3 -c "from utils.config import load_config; print(load_config().gguf_file)")}"
 MODEL_NAME="${OLLAMA_MODEL:-$(python3 -c "from utils.config import load_config; print(load_config().ollama_model_name)")}"
+
+# Map HuggingFace model names to Ollama base model names for template extraction
+# Override with BASE_OLLAMA_MODEL env var for custom mappings
+if [ -z "${BASE_OLLAMA_MODEL:-}" ]; then
+    HF_BASE=$(python3 -c "from utils.config import load_config; print(load_config().base_model)")
+    case "$HF_BASE" in
+        *gemma-3-1b*)   BASE_OLLAMA_MODEL="gemma3:1b" ;;
+        *gemma-3-4b*)   BASE_OLLAMA_MODEL="gemma3:4b" ;;
+        *gemma-3-12b*)  BASE_OLLAMA_MODEL="gemma3:12b" ;;
+        *gemma-3-27b*)  BASE_OLLAMA_MODEL="gemma3:27b" ;;
+        *Qwen3.5-9B*)   BASE_OLLAMA_MODEL="qwen3:8b" ;;
+        *Qwen3-8B*)     BASE_OLLAMA_MODEL="qwen3:8b" ;;
+        *Mistral-7B*)   BASE_OLLAMA_MODEL="mistral:7b" ;;
+        *Llama-3*)      BASE_OLLAMA_MODEL="llama3:8b" ;;
+        *Phi-3*)        BASE_OLLAMA_MODEL="phi3:mini" ;;
+        *)
+            echo "WARNING: Unknown base model '$HF_BASE' — defaulting to generic Modelfile"
+            BASE_OLLAMA_MODEL=""
+            ;;
+    esac
+fi
+
 MODELFILE="/tmp/Modelfile-clawd"
 
 if [ ! -f "$GGUF_PATH" ]; then
@@ -34,90 +46,57 @@ if [ ! -f "$GGUF_PATH" ]; then
     exit 1
 fi
 
-echo "GGUF:  $GGUF_PATH"
-echo "Model: $MODEL_NAME"
+echo "GGUF:       $GGUF_PATH"
+echo "Model:      $MODEL_NAME"
+echo "Base model: ${BASE_OLLAMA_MODEL:-generic}"
 
-# Write FROM line first (needs variable expansion), then append rest as literal
-echo "FROM $GGUF_PATH" > "$MODELFILE"
-cat >> "$MODELFILE" << 'EOF'
-TEMPLATE """
-{{- $lastUserIdx := -1 -}}
-{{- range $idx, $msg := .Messages -}}
-{{- if eq $msg.Role "user" }}{{ $lastUserIdx = $idx }}{{ end -}}
-{{- end }}
-{{- if or .System .Tools }}<|im_start|>system
-{{ if .System }}
-{{ .System }}
-{{- end }}
-{{- if .Tools }}
+# ── Build Modelfile ───────────────────────────────────────────────────────────
 
-# Tools
+if [ -n "$BASE_OLLAMA_MODEL" ]; then
+    # Pull base model if not already present (needed for template extraction)
+    if ! ollama list 2>/dev/null | grep -q "^${BASE_OLLAMA_MODEL}"; then
+        echo "Pulling base model for template extraction: $BASE_OLLAMA_MODEL"
+        ollama pull "$BASE_OLLAMA_MODEL"
+    fi
 
-You may call one or more functions to assist with the user query.
+    # Extract template from base model's Modelfile
+    echo "Extracting Modelfile template from $BASE_OLLAMA_MODEL..."
+    BASE_MODELFILE=$(ollama show "$BASE_OLLAMA_MODEL" --modelfile 2>/dev/null || true)
 
-You are provided with function signatures within <tools></tools> XML tags:
-<tools>
-{{- range .Tools }}
-{"type": "function", "function": {{ .Function }}}
-{{- end }}
-</tools>
+    if [ -z "$BASE_MODELFILE" ]; then
+        echo "ERROR: Could not extract Modelfile from $BASE_OLLAMA_MODEL"
+        exit 1
+    fi
 
-For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
-<tool_call>
-{"name": <function-name>, "arguments": <args-json-object>}
-</tool_call>
-{{- end -}}
-<|im_end|>
-{{ end }}
-{{- range $i, $_ := .Messages }}
-{{- $last := eq (len (slice $.Messages $i)) 1 -}}
-{{- if eq .Role "user" }}<|im_start|>user
-{{ .Content }}
-{{- if and $.IsThinkSet (eq $i $lastUserIdx) }}
-   {{- if $.Think -}}
-      {{- " "}}/think
-   {{- else -}}
-      {{- " "}}/no_think
-   {{- end -}}
-{{- end }}<|im_end|>
-{{ else if eq .Role "assistant" }}<|im_start|>assistant
-{{ if (and $.IsThinkSet (and .Thinking (or $last (gt $i $lastUserIdx)))) -}}
-<think>{{ .Thinking }}</think>
-{{ end -}}
-{{ if .Content }}{{ .Content }}
-{{- else if .ToolCalls }}<tool_call>
-{{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
-{{ end }}</tool_call>
-{{- end }}{{ if not $last }}<|im_end|>
-{{ end }}
-{{- else if eq .Role "tool" }}<|im_start|>user
-<tool_response>
-{{ .Content }}
-</tool_response><|im_end|>
-{{ end }}
-{{- if and (ne .Role "assistant") $last }}<|im_start|>assistant
-{{ if and $.IsThinkSet (not $.Think) -}}
-<think>
+    # Build new Modelfile: replace FROM line, keep everything else
+    echo "FROM $GGUF_PATH" > "$MODELFILE"
 
-</think>
+    # Extract everything after the FROM line from the base modelfile
+    echo "$BASE_MODELFILE" | sed '1,/^FROM /d' >> "$MODELFILE"
 
-{{ end -}}
-{{ end }}
-{{- end }}"""
+    # Append our system prompt (overrides the base model's)
+    cat >> "$MODELFILE" << 'SYSTEM_EOF'
+SYSTEM """You are Clawd, an autonomous AI agent powered by OpenClaw. You help users accomplish real-world tasks by using tools. Be direct and competent — start with action, not explanation. Get things done."""
+SYSTEM_EOF
+
+else
+    # Generic Modelfile — no template extraction available
+    echo "FROM $GGUF_PATH" > "$MODELFILE"
+    cat >> "$MODELFILE" << 'GENERIC_EOF'
+PARAMETER temperature 0.6
 PARAMETER top_k 20
 PARAMETER top_p 0.95
-PARAMETER repeat_penalty 1
-PARAMETER stop <|im_start|>
-PARAMETER stop <|im_end|>
-PARAMETER temperature 0.6
 SYSTEM """You are Clawd, an autonomous AI agent powered by OpenClaw. You help users accomplish real-world tasks by using tools. Be direct and competent — start with action, not explanation. Get things done."""
-EOF
+GENERIC_EOF
+fi
 
+echo ""
 echo "Removing old model..."
 ollama rm "$MODEL_NAME" 2>/dev/null || true
 
-echo "Creating fixed model..."
+echo "Creating model..."
 ollama create "$MODEL_NAME" -f "$MODELFILE"
 
+echo ""
 echo "Testing..."
 ollama run "$MODEL_NAME" "Say hello and stop."
