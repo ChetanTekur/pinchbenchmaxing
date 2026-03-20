@@ -83,11 +83,28 @@ class CuratorAgent(Agent):
                         self.log(f"  WARNING: {r['percent_removed']}% removed "
                                  "— generation may lack diversity")
 
-        # ── 5. Verify ─────────────────────────────────────────────────────
+        # ── 5. Rebalance ──────────────────────────────────────────────────
+        try:
+            max_total = cfg.loop.max_total_per_task
+        except AttributeError:
+            max_total = 120
+
+        rebalance_script = _PROJECT_ROOT / "datagen" / "rebalance.py"
+        if rebalance_script.exists():
+            self.log(f"Rebalancing dataset (max {max_total} per task)...")
+            rc = self.run_cmd(
+                [sys.executable, "-m", "datagen.rebalance",
+                 "--target", str(max_total)],
+                check=False,
+            )
+            if rc != 0:
+                self.log(f"  WARNING: rebalance exited {rc} (continuing)")
+
+        # ── 6. Verify ─────────────────────────────────────────────────────
         train_file = cfg.train_file
         if not train_file.exists() or train_file.stat().st_size == 0:
             raise RuntimeError(
-                f"train.jsonl empty after curation (score >= {min_score} + dedup). "
+                f"train.jsonl empty after curation. "
                 "Lower min_judge_score or regenerate data."
             )
         n = sum(1 for line in train_file.read_text().splitlines() if line.strip())

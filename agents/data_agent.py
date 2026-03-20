@@ -46,13 +46,13 @@ class DataAgent(Agent):
         # ── Compute per-task example counts ────────────────────────────────
         target_score = cfg.loop.target_score
         try:
-            max_per_task = cfg.loop.max_examples_per_task
+            max_per_task = cfg.loop.max_new_per_task
         except AttributeError:
-            max_per_task = 100
+            max_per_task = 50
         try:
             total_cap = cfg.loop.total_new_examples_cap
         except AttributeError:
-            total_cap = 500
+            total_cap = 300
 
         task_counts = self._compute_per_task_counts(
             state.weak_tasks, state.scores, target_score, max_per_task, total_cap

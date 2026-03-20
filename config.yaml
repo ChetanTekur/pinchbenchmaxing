@@ -46,8 +46,9 @@ loop:
   max_iterations: 2           # increase after verifying the loop works correctly
   target_score: 0.85          # stop when benchmark score exceeds this
   weak_task_threshold: 0.50   # tasks below this get more synthetic data each iteration
-  max_examples_per_task: 100  # ceiling for score-0 tasks; decays proportionally toward target
-  total_new_examples_cap: 500 # max total new examples per iteration (keeps training predictable)
+  max_new_per_task: 50        # max NEW examples per task per iteration (score-0 gets this many)
+  max_total_per_task: 120     # hard cap: rebalance trims any task above this before training
+  total_new_examples_cap: 300 # max total new examples per iteration
 
 # HuggingFace dataset repo for versioned data snapshots
 # CuratorAgent auto-pushes after each curation pass.
