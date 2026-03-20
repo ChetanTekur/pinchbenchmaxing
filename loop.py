@@ -29,7 +29,7 @@ from pathlib import Path
 
 from utils.config import load_config
 from agents import AgentState, EvalAgent, EvalAnalysisAgent, DataAgent, CuratorAgent, TrainerAgent
-from agents.base import TASK_IDS, PauseException, setup_file_logger
+from agents.base import TASK_IDS, PauseException, setup_file_logger, log_print
 
 
 # ── Tuning parameters ─────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ def load_state(state_file: Path) -> AgentState:
 def save_state(state: AgentState, state_file: Path) -> None:
     state_file.parent.mkdir(parents=True, exist_ok=True)
     state_file.write_text(json.dumps(state.to_dict(), indent=2))
-    print(f"[orchestrator] State saved → {state_file}")
+    log_print(f"[orchestrator] State saved → {state_file}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -103,9 +103,9 @@ def run_stage(agent, state: AgentState, cfg) -> AgentState:
     Run one agent. On failure, update state and re-raise.
     PauseException propagates directly to the main loop.
     """
-    print(f"\n{'─'*62}")
-    print(f"  STAGE: {agent.name.upper()}")
-    print(f"{'─'*62}")
+    log_print(f"\n{'─'*62}")
+    log_print(f"  STAGE: {agent.name.upper()}")
+    log_print(f"{'─'*62}")
     try:
         return agent.run(state, cfg)
     except PauseException:
@@ -123,10 +123,10 @@ def pause(state: AgentState, state_file: Path, reason: str) -> None:
     state.pause_reason = reason
     state.history.append(state.snapshot("paused"))
     save_state(state, state_file)
-    print(f"\n{'!'*62}")
-    print(f"  ⏸  LOOP PAUSED — human review required")
-    print(f"  Reason: {reason}")
-    print(f"{'!'*62}")
+    log_print(f"\n{'!'*62}")
+    log_print(f"  PAUSED — human review required")
+    log_print(f"  Reason: {reason}")
+    log_print(f"{'!'*62}")
     raise PauseException(reason)
 
 
@@ -137,11 +137,11 @@ def stage_failed(state: AgentState, state_file: Path,
     state.history[-1]["failed_agent"] = agent_name
     state.history[-1]["error"]        = error
     save_state(state, state_file)
-    print(f"\n{'!'*62}")
-    print(f"  ✗  STAGE FAILED: {agent_name.upper()}")
-    print(f"  {error}")
-    print(f"  Fix the issue and re-run. State is saved.")
-    print(f"{'!'*62}")
+    log_print(f"\n{'!'*62}")
+    log_print(f"  FAILED: {agent_name.upper()}")
+    log_print(f"  {error}")
+    log_print(f"  Fix the issue and re-run. State is saved.")
+    log_print(f"{'!'*62}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -155,19 +155,19 @@ def cmd_status(args, cfg) -> None:
         return
     state = load_state(state_file)
 
-    print(f"\nLifetime iterations : {state.iteration}")
-    print(f"Current avg score   : {state.avg_score:.3f}")
-    print(f"Best avg score      : {state.best_avg_score:.3f}  (v{state.best_version})")
-    print(f"Current model       : v{state.model_version}  ({state.current_ollama_model})")
-    print(f"Weak tasks          : {state.weak_tasks}")
+    log_print(f"\nLifetime iterations : {state.iteration}")
+    log_print(f"Current avg score   : {state.avg_score:.3f}")
+    log_print(f"Best avg score      : {state.best_avg_score:.3f}  (v{state.best_version})")
+    log_print(f"Current model       : v{state.model_version}  ({state.current_ollama_model})")
+    log_print(f"Weak tasks          : {state.weak_tasks}")
 
     if state.model_history:
-        print(f"\nVersion history:")
+        log_print(f"\nVersion history:")
         for entry in sorted(state.model_history, key=lambda h: h["version"]):
-            print(f"  v{entry['version']:>2}  {entry['ollama_name']:<30}  "
+            log_print(f"  v{entry['version']:>2}  {entry['ollama_name']:<30}  "
                   f"avg={entry['avg_score']:.3f}  {entry['timestamp'][:10]}")
 
-    print(f"\nIteration history:")
+    log_print(f"\nIteration history:")
     for entry in state.history:
         ts      = entry.get("timestamp", "?")[:19]
         status  = entry.get("status", "?")
@@ -176,7 +176,7 @@ def cmd_status(args, cfg) -> None:
         n_weak  = entry.get("n_weak_tasks", "?")
         v       = entry.get("model_version", "?")
         pause   = f"  ← {entry['pause_reason']}" if entry.get("pause_reason") else ""
-        print(f"  [{ts}] iter={entry['iteration']:>3}  v{v}  "
+        log_print(f"  [{ts}] iter={entry['iteration']:>3}  v{v}  "
               f"avg={avg}  best={best}  weak={n_weak}  {status}{pause}")
 
 
@@ -192,11 +192,11 @@ def cmd_run(args, cfg) -> None:
     if args.scores:
         seeded = parse_scores_from_json_str(args.scores)
         state.record_eval(seeded)
-        print(f"[orchestrator] Seeded {len(seeded)} scores from --scores.")
+        log_print(f"[orchestrator] Seeded {len(seeded)} scores from --scores.")
     elif args.log:
         seeded = parse_scores_from_log(args.log)
         state.record_eval(seeded)
-        print(f"[orchestrator] Seeded {len(seeded)} scores from {args.log}.")
+        log_print(f"[orchestrator] Seeded {len(seeded)} scores from {args.log}.")
 
     # ── Seed model version if running a named model ───────────────────────────
     if args.model and not state.current_ollama_model:
@@ -206,9 +206,9 @@ def cmd_run(args, cfg) -> None:
         m = re.search(r'-v(\d+)$', args.model)
         if m:
             state.model_version = int(m.group(1))
-            print(f"[orchestrator] Set current model to: {args.model} (version {state.model_version})")
+            log_print(f"[orchestrator] Set current model to: {args.model} (version {state.model_version})")
         else:
-            print(f"[orchestrator] Set current model to: {args.model}")
+            log_print(f"[orchestrator] Set current model to: {args.model}")
 
     max_iter  = cfg.loop.max_iterations
     target    = cfg.loop.target_score
@@ -216,25 +216,25 @@ def cmd_run(args, cfg) -> None:
 
     # ── Validate base model (once — result cached in state) ────────────────
     if not state.model_validated:
-        print(f"\n[orchestrator] Validating base model: {cfg.base_model}")
+        log_print(f"\n[orchestrator] Validating base model: {cfg.base_model}")
         from stages.validate_model import validate_model
         result = validate_model(cfg.base_model)
         if not result["ok"]:
             for e in result["errors"]:
-                print(f"  ERROR: {e}")
-            print(f"\n  Fix config.yaml model.base and restart.")
+                log_print(f"  ERROR: {e}")
+            log_print(f"\n  Fix config.yaml model.base and restart.")
             sys.exit(1)
         for w in result["warnings"]:
-            print(f"  WARNING: {w}")
+            log_print(f"  WARNING: {w}")
         info = result["info"]
-        print(f"  Architecture: {info.get('model_type', '?')}, "
+        log_print(f"  Architecture: {info.get('model_type', '?')}, "
               f"~{info.get('estimated_params_b', '?')}B params, "
               f"Unsloth: {'yes' if info.get('unsloth_supported') else 'check'}")
         state.model_validated = True
         save_state(state, state_file)
-        print(f"  [OK] Model validated (cached — won't re-check next iteration)\n")
+        log_print(f"  [OK] Model validated (cached — won't re-check next iteration)\n")
     else:
-        print(f"[orchestrator] Model '{cfg.base_model}' already validated (cached)")
+        log_print(f"[orchestrator] Model '{cfg.base_model}' already validated (cached)")
 
     pipeline = [
         EvalAgent(),
@@ -250,13 +250,13 @@ def cmd_run(args, cfg) -> None:
     for step in range(1, max_iter + 1):
         state.iteration += 1
 
-        print(f"\n{'='*62}")
-        print(f"  ITERATION {step}/{max_iter}  (lifetime #{state.iteration})")
-        print(f"  Avg score: {state.avg_score:.3f}  |  Best: {state.best_avg_score:.3f}  "
+        log_print(f"\n{'='*62}")
+        log_print(f"  ITERATION {step}/{max_iter}  (lifetime #{state.iteration})")
+        log_print(f"  Avg score: {state.avg_score:.3f}  |  Best: {state.best_avg_score:.3f}  "
               f"|  Target: {target}")
-        print(f"  Model: v{state.model_version} ({state.current_ollama_model or 'none'})")
-        print(f"  Weak tasks ({len(state.weak_tasks)}): {state.weak_tasks}")
-        print(f"{'='*62}")
+        log_print(f"  Model: v{state.model_version} ({state.current_ollama_model or 'none'})")
+        log_print(f"  Weak tasks ({len(state.weak_tasks)}): {state.weak_tasks}")
+        log_print(f"{'='*62}")
 
         state.history.append(state.snapshot("running"))
         save_state(state, state_file)
@@ -287,14 +287,14 @@ def cmd_run(args, cfg) -> None:
 
         # GATE: target reached
         if state.avg_score >= target:
-            print(f"\n[orchestrator] 🎯 Target {target} reached! Done.")
+            log_print(f"\n[orchestrator] 🎯 Target {target} reached! Done.")
             state.history[-1].update(state.snapshot("target_reached"))
             save_state(state, state_file)
             break
 
         # GATE: no weak tasks
         if not state.weak_tasks:
-            print("[orchestrator] No weak tasks — all above threshold.")
+            log_print("[orchestrator] No weak tasks — all above threshold.")
             state.history[-1].update(state.snapshot("no_weak_tasks"))
             save_state(state, state_file)
             break
@@ -357,7 +357,7 @@ def cmd_run(args, cfg) -> None:
                   f"(before={pre_count}, after={post_count}). "
                   f"All tasks may be at target count, or topup.py failed.")
 
-        print(f"[orchestrator] New examples: {pre_count} → {post_count} "
+        log_print(f"[orchestrator] New examples: {pre_count} → {post_count} "
               f"(+{post_count - pre_count})")
         save_state(state, state_file)
 
@@ -393,9 +393,9 @@ def cmd_run(args, cfg) -> None:
         state.history[-1].update(state.snapshot("trained"))
         save_state(state, state_file)
 
-        print(f"\n[orchestrator] Iteration {step} complete. "
+        log_print(f"\n[orchestrator] Iteration {step} complete. "
               f"New model: v{state.model_version} ({state.current_ollama_model})")
-        print(f"[orchestrator] Next iteration will begin with eval of "
+        log_print(f"[orchestrator] Next iteration will begin with eval of "
               f"'{state.current_ollama_model}'.")
 
 

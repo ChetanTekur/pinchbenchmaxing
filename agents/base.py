@@ -27,9 +27,22 @@ def setup_file_logger(log_dir: str | os.PathLike) -> None:
     log_path = Path(log_dir) / "loop.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     _log_file = open(log_path, "a", buffering=1)  # line-buffered
-    _log_file.write(f"\n{'='*62}\n")
-    _log_file.write(f"  Loop started: {datetime.utcnow().isoformat()}\n")
-    _log_file.write(f"{'='*62}\n")
+    _write_log(f"\n{'='*62}")
+    _write_log(f"  Loop started: {datetime.utcnow().isoformat()}")
+    _write_log(f"{'='*62}")
+
+
+def _write_log(msg: str) -> None:
+    """Write a line to the log file (if open)."""
+    if _log_file:
+        ts = datetime.utcnow().strftime("%H:%M:%S")
+        _log_file.write(f"[{ts}] {msg}\n")
+
+
+def log_print(msg: str = "") -> None:
+    """Print to stdout AND write to log file. Use instead of print() in loop.py."""
+    print(msg, flush=True)
+    _write_log(msg)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -233,18 +246,27 @@ class Agent(ABC):
     # ── Helpers ──────────────────────────────────────────────────────────────
 
     def log(self, msg: str) -> None:
-        line = f"  [{self.name.upper()} AGENT] {msg}"
+        line = f"  [{self.name.upper()}] {msg}"
         print(line, flush=True)
-        if _log_file:
-            ts = datetime.utcnow().strftime("%H:%M:%S")
-            _log_file.write(f"[{ts}] {line}\n")
+        _write_log(line)
 
     def run_cmd(self, cmd: list[str], env: dict | None = None,
                 check: bool = True) -> int:
+        """Run a subprocess, capturing all output to both stdout and log file."""
         merged = {**os.environ, **(env or {})}
         self.log(f"$ {' '.join(cmd)}")
-        result = subprocess.run(cmd, env=merged)
+        result = subprocess.run(
+            cmd, env=merged,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True,
+        )
+        # Stream output line by line to both stdout and log file
+        if result.stdout:
+            for line in result.stdout.splitlines():
+                print(f"    {line}", flush=True)
+                _write_log(f"    {line}")
         if check and result.returncode != 0:
+            self.log(f"Command exited with code {result.returncode}")
             raise subprocess.CalledProcessError(result.returncode, cmd)
         return result.returncode
 
