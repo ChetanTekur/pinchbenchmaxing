@@ -24,27 +24,32 @@ def load_jsonl(path: Path) -> list[dict]:
 
 def auto_batch_size(config_batch: int, model_vram_gb: float = 15.0) -> tuple[int, int]:
     """
-    Maximize batch size based on available GPU VRAM.
-    Returns (batch_size, grad_accum) targeting effective batch ~32.
+    Maximize batch size based on available GPU VRAM without triggering
+    gradient offloading (which kills throughput).
+
+    Strategy: stay under ~60% of free VRAM to avoid Unsloth's auto-offload.
+    ~3-4 GB per batch item for 9B model with LoRA (conservative estimate
+    that accounts for activations, optimizer states, and grad buffers).
     """
     try:
         import torch
         if torch.cuda.is_available():
             total_vram = torch.cuda.get_device_properties(0).total_mem / (1024**3)
-            free_vram = total_vram - model_vram_gb  # rough estimate after model load
+            free_vram = total_vram - model_vram_gb
 
-            # Scale batch size with available VRAM
-            # ~2 GB per batch item for 9B model with LoRA
-            max_batch = max(2, int(free_vram / 2))
-            # Cap at 32 (diminishing returns beyond this)
-            batch_size = min(max_batch, 32)
+            # Conservative: 4 GB per batch item avoids gradient offloading
+            # Use only 60% of free VRAM to leave headroom
+            usable_vram = free_vram * 0.6
+            max_batch = max(2, int(usable_vram / 4))
+            # Cap at 16 — beyond this, offloading kicks in on most GPUs
+            batch_size = min(max_batch, 16)
             # Adjust grad_accum to keep effective batch ~32
             effective_target = 32
             grad_accum = max(1, effective_target // batch_size)
 
             print(f"GPU        : {torch.cuda.get_device_name(0)}")
-            print(f"VRAM       : {total_vram:.0f} GB total, ~{free_vram:.0f} GB available for batching")
-            print(f"Batch size : {config_batch} (config) → {batch_size} (auto-optimized)")
+            print(f"VRAM       : {total_vram:.0f} GB total, ~{free_vram:.0f} GB free")
+            print(f"Batch size : {config_batch} (config) → {batch_size} (auto, no offload)")
             print(f"Grad accum : {grad_accum} (effective batch = {batch_size * grad_accum})")
             return batch_size, grad_accum
     except Exception:
