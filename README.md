@@ -1,10 +1,16 @@
 # PinchBench Maxing
 
-An autonomous system that fine-tunes an open-source LLM to compete on [PinchBench](https://pinchbench.com) — a 23-task benchmark for AI agents.
+An agentic system that autonomously fine-tunes an open-source LLM to compete on [PinchBench](https://pinchbench.com) — a 23-task benchmark for AI agents.
 
-A Claude-powered **orchestrator** examines the current state, decides what to do next, and calls tools to execute: benchmark, diagnose failures, generate targeted training data, curate quality, and train. Each decision is a single Claude API call — no fixed pipeline, no hardcoded stage order. The orchestrator adapts to whatever situation it finds.
+## The Idea
 
-Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch): give an AI system a metric to optimize and let it drive the improvement cycle.
+Most ML training loops are rigid pipelines: generate data → train → eval → repeat. When something goes wrong — the dataset is imbalanced, a task regresses, disk fills up — the pipeline breaks and a human has to debug.
+
+PinchBench Maxing replaces the pipeline with a **Claude-powered orchestrator** that *reasons* about what to do next. It sees the current state (benchmark scores, dataset stats, budget, disk space, action history) and makes a decision: should I generate more data? Rebalance the dataset first? Diagnose why email scoring dropped? Clean up disk before training?
+
+Each decision is a single Claude API call. The orchestrator has 19 tools at its disposal and a set of guardrails defined in plain markdown (`prompts/orchestrator.md`). No hardcoded stage order. No brittle `if/else` logic. The orchestrator adapts.
+
+Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch): give an AI system a metric to optimize and let it drive the improvement cycle while you sleep.
 
 | Karpathy autoresearch | PinchBench Maxing |
 |---|---|
@@ -27,44 +33,104 @@ Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch):
 | qwen35-9b-clawd-v3 | 16.8 / 23 (73%) | Manual topup |
 | qwen35-9b-clawd-v5 | 15.0 / 23 (65%) | First agentic pipeline run |
 | qwen35-9b-clawd-v6 | 16.6 / 23 (72%) | Score-proportional data gen |
-| qwen35-9b-clawd-v7 | 14.8 / 23 (64%) | Regression from dataset imbalance |
+| qwen35-9b-clawd-v7 | 14.8 / 23 (64%) | Regression — dataset imbalance (fixed) |
 
 Dataset: [huggingface.co/datasets/cptekur/pinchbench-clawd](https://huggingface.co/datasets/cptekur/pinchbench-clawd) (CC BY 4.0)
 
 ---
 
-## How It Works
+## Architecture
+
+### The Orchestrator
+
+The orchestrator is a **single-turn agent loop**. Each turn:
+
+1. **State is loaded** from `loop_state.json` — scores, dataset stats, budget, action history
+2. **A system prompt** is assembled from `prompts/orchestrator.md` (a markdown template) with variables filled from `config.yaml` — target score, model name, guardrails, budget
+3. **Claude receives** the system prompt + state summary + action history and returns **one tool call**
+4. **The tool executes** (generate data, train, benchmark, etc.) and the result is appended to the action history
+5. **State is saved** — crash-safe, resumable from any point
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│              Claude Orchestrator                        │
-│                                                         │
-│   State → Claude decides → Tool call → State updates    │
-│                    ↑                         │           │
-│                    └─────────────────────────┘           │
-│                   (repeat until DONE)                    │
-└─────────────────────────────────────────────────────────┘
+                     prompts/orchestrator.md
+                              │
+                    ┌─────────▼──────────┐
+                    │                    │
+ config.yaml ──────▶  Claude Sonnet 4.6  ◀────── loop_state.json
+                    │                    │           (state + action history)
+                    └─────────┬──────────┘
+                              │
+                         tool call
+                              │
+              ┌───────────────┼───────────────┐
+              │               │               │
+      ┌───────▼──────┐ ┌─────▼─────┐ ┌───────▼──────┐
+      │  Data Tools  │ │ Reasoning │ │  Training    │
+      │              │ │   Tools   │ │    Tools     │
+      │ inspect      │ │           │ │              │
+      │ generate     │ │ diagnose  │ │ train        │
+      │ score        │ │ plan      │ │ convert      │
+      │ filter       │ │ strategy  │ │ register     │
+      │ repair       │ │           │ │ benchmark    │
+      │ dedup        │ │ (Claude   │ │              │
+      │ rebalance    │ │  calls    │ │              │
+      │ snapshot     │ │  Claude)  │ │              │
+      └──────────────┘ └───────────┘ └──────────────┘
 ```
 
-The orchestrator is a loop:
-1. Claude receives the current state (scores, dataset stats, budget, action history)
-2. Claude decides what to do and calls **one tool**
-3. The tool executes, state updates
-4. Repeat until target score is reached, budget is exhausted, or Claude says DONE
+**No conversation history accumulates.** Each turn is an independent Claude API call (~$0.03). The "memory" is the action history persisted in `loop_state.json`, not Claude's conversation buffer. This means **zero risk of context overflow** regardless of how many turns the session runs.
 
-Each turn is a **single Claude API call** (~$0.03). No conversation history accumulates — "memory" is the action history in `loop_state.json`. Zero risk of context overflow.
+### Prompt Architecture
+
+All agent behavior is defined in **markdown templates**, not Python code:
+
+```
+prompts/
+  orchestrator.md     ← orchestrator system prompt (guardrails, decision framework, scenarios)
+  diagnose.md         ← failure analysis reasoning (root causes, data fixes)
+  plan_strategy.md    ← data generation planning (score-proportional allocation)
+```
+
+Each template uses `{variable}` placeholders filled from `config.yaml` at runtime:
+- `{target_score}` → `0.85`
+- `{max_total_per_task}` → `120`
+- `{budget_usd}` → `25`
+
+**To change the orchestrator's behavior, edit the markdown.** Add a guardrail, change a priority, adjust a scenario — no code changes, no redeployment. Just edit `prompts/orchestrator.md` and restart.
 
 ### Two Layers of Reasoning
 
-**Orchestrator** (decides WHAT to do):
-- Lightweight: picks the next action based on state
-- Example: "dataset is imbalanced → call rebalance before training"
+The orchestrator itself makes lightweight decisions ("dataset is imbalanced → rebalance before training"). For deeper analysis, it delegates to **specialist reasoning tools** that call Claude internally:
 
-**Specialist reasoning tools** (deeper analysis):
-- `diagnose` — Claude analyzes benchmark results, forms hypotheses about failures, produces structured root causes
-- `plan_strategy` — Claude takes the diagnosis + dataset stats and produces a specific data generation plan
+**`diagnose`** — receives benchmark scores, dataset stats, training logs, and benchmark error output. Claude reasons about *why* tasks are failing: schema mismatches, data quality issues, coverage gaps, regressions. Returns structured JSON with ranked root causes and recommended fixes.
 
-The orchestrator delegates deep thinking to these tools and acts on their output.
+**`plan_strategy`** — receives the diagnosis + dataset state. Claude produces a specific data generation plan: which tasks need examples, how many (score-proportional with caps), which variation types to weight (error_recovery, multi_tool_chain), and which tasks need adversarial examples from benchmark transcripts.
+
+These are the tools where Claude reasons about the problem. Everything else is execution.
+
+### Example Session
+
+```
+Turn 1:  inspect_data     → "email=500 (4x mean), skill_search=39 — severely imbalanced"
+Turn 2:  rebalance_data   → "trimmed 1200 examples, now 1703 total"
+Turn 3:  diagnose         → "5 root causes: email schema wrong, second_brain never worked..."
+Turn 4:  plan_strategy    → "email: 20 targeted, second_brain: 30 adversarial, ..."
+Turn 5:  snapshot         → "saved pre-v8-training snapshot"
+Turn 6:  generate_data    → "generated 150 new examples across 5 tasks"
+Turn 7:  score_data       → "scored 1853 examples"
+Turn 8:  filter_data      → "kept 1820, removed 33"
+Turn 9:  dedup_data       → "removed 25 duplicates"
+Turn 10: inspect_data     → "balanced: all tasks 60-120 examples"
+Turn 11: check_disk       → "142 GB free"
+Turn 12: push_hf          → "pushed to huggingface.co/datasets/cptekur/pinchbench-clawd"
+Turn 13: train            → "loss 0.35, 45 minutes on H200"
+Turn 14: convert          → "GGUF at .../v8_merged.Q4_K_M.gguf (5.1 GB)"
+Turn 15: register         → "qwen35-9b-clawd-v8 registered in Ollama"
+Turn 16: benchmark        → "74% (17.0/23) — up from 64%"
+Turn 17: DONE             → "improved 64% → 74%. Budget: $18 remaining. Continue next session."
+```
+
+Notice how the orchestrator inspected the data *first*, saw the imbalance, and rebalanced *before* generating anything. A fixed pipeline would have generated more data on top of an already-broken dataset.
 
 ### Available Tools
 
