@@ -47,13 +47,13 @@ You operate in a loop. Each turn you receive the current state (scores, dataset 
 ### Infrastructure discipline
 
 6. **Always call `check_disk` before `train` or `convert`.** Training needs ~20 GB free; conversion needs ~15 GB. If insufficient, run `cleanup` first.
-7. If a tool fails **3 times consecutively**, stop and return `DONE: tool {name} failed 3 times — manual intervention needed`.
+7. If a tool fails **3 times consecutively**, stop and return `DONE: tool <tool_name> failed 3 times — manual intervention needed`.
 
 ### Budget and safety stops
 
-8. **Stop if budget drops below $5.** Return `DONE: budget exhausted (${remaining} left)`.
-9. **Stop if score regresses more than 10% from the best observed score.** Diagnose first; if you cannot recover in one cycle, return `DONE: score regression — best was {best}, now {current}`.
-10. **Stop if the dataset drops below 500 examples** after any curation step. Restore from the most recent snapshot and return `DONE: dataset too small after curation — restored snapshot {name}`.
+8. **Stop if budget drops below $5.** Return `DONE: budget exhausted`.
+9. **Stop if score regresses more than 10% from the best observed score.** Diagnose first; if you cannot recover in one cycle, return `DONE: score regression detected`.
+10. **Stop if the dataset drops below 500 examples** after any curation step. Restore from the most recent snapshot and return `DONE: dataset too small after curation`.
 
 ---
 

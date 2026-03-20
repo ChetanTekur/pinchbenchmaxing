@@ -49,23 +49,37 @@ def save_state(state: AgentState, state_file: Path) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_system_prompt(cfg) -> str:
-    """Load orchestrator prompt template and fill from config."""
+    """Load orchestrator prompt template and fill from config.
+    Uses $var syntax (string.Template) so curly braces in the markdown
+    don't conflict with Python's str.format()."""
+    from string import Template
     template_path = PROJECT_ROOT / "prompts" / "orchestrator.md"
-    template = template_path.read_text()
+    raw = template_path.read_text()
 
-    return template.format(
-        benchmark_name=cfg.benchmark.name,
-        benchmark_url=getattr(cfg.benchmark, 'url', 'https://pinchbench.com'),
-        total_tasks=cfg.benchmark.total_tasks,
-        target_score=cfg.loop.target_score,
-        model_base=cfg.base_model,
-        model_name=cfg.model_name,
-        max_new_per_task=cfg.loop.max_new_per_task,
-        max_total_per_task=cfg.loop.max_total_per_task,
-        total_new_cap=cfg.loop.total_new_examples_cap,
-        budget_usd=cfg.orchestrator.budget_usd,
-        gpu_rate=cfg.orchestrator.gpu_rate_per_hour,
-    )
+    # Convert {var} placeholders to $var for string.Template
+    # Only replace known variables, leave everything else untouched
+    variables = {
+        "benchmark_name": cfg.benchmark.name,
+        "benchmark_url": getattr(cfg.benchmark, 'url', 'https://pinchbench.com'),
+        "total_tasks": str(cfg.benchmark.total_tasks),
+        "target_score": f"{cfg.loop.target_score:.0%}",
+        "model_base": cfg.base_model,
+        "model_name": cfg.model_name,
+        "max_new_per_task": str(cfg.loop.max_new_per_task),
+        "max_total_per_task": str(cfg.loop.max_total_per_task),
+        "total_new_cap": str(cfg.loop.total_new_examples_cap),
+        "budget_usd": str(cfg.orchestrator.budget_usd),
+        "gpu_rate": str(cfg.orchestrator.gpu_rate_per_hour),
+    }
+
+    # Simple replacement — handles {var} without choking on other braces
+    result = raw
+    for key, value in variables.items():
+        result = result.replace("{" + key + "}", value)
+        # Also handle format specs like {target_score:.0%}
+        result = result.replace("{" + key + ":.0%}", value)
+
+    return result
 
 
 def build_turn_context(state: AgentState, cfg) -> str:
