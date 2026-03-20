@@ -11,6 +11,7 @@ paths:
 
 benchmark:
   name: pinchbench
+  url: https://pinchbench.com
   total_tasks: 23
 
 data:
@@ -49,6 +50,17 @@ loop:
   max_new_per_task: 50        # max NEW examples per task per iteration (score-0 gets this many)
   max_total_per_task: 120     # hard cap: rebalance trims any task above this before training
   total_new_examples_cap: 300 # max total new examples per iteration
+
+orchestrator:
+  model: claude-sonnet-4-6      # model for orchestrator decisions (~$0.03/turn)
+  max_actions: 20               # max tool calls per session
+  budget_usd: 25                # total budget per session (API + GPU estimated)
+  gpu_rate_per_hour: 3.60       # for GPU cost estimation
+  auto_pause:
+    score_regression_pct: 10    # pause if score drops this much below best
+    min_dataset_size: 500       # pause if dataset drops below this
+    min_disk_gb: 10             # pause if disk free drops below this
+    max_consecutive_failures: 3 # pause if a tool fails this many times in a row
 
 # HuggingFace dataset repo for versioned data snapshots
 # CuratorAgent auto-pushes after each curation pass.

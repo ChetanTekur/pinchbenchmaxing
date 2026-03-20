@@ -424,15 +424,34 @@ def main():
                       help="Seed scores from a benchmark log file")
     run_p.add_argument("--model", type=str, default="",
                        help="Set current Ollama model name (without ollama/ prefix)")
+    run_p.add_argument("--mode", type=str, default="agentic",
+                       choices=["agentic", "pipeline"],
+                       help="agentic (default): Claude orchestrator. pipeline: fixed sequence.")
+    run_p.add_argument("--dry-run", action="store_true",
+                       help="(agentic mode) Claude decides but tools don't execute")
 
     sub.add_parser("status", help="Show pipeline history and version table")
 
     args = parser.parse_args()
     if args.command == "run":
-        try:
-            cmd_run(args, cfg)
-        except PauseException as exc:
-            sys.exit(3)   # 3 = paused, distinct from error (1) / no-data (2)
+        if args.mode == "agentic":
+            from orchestrator import main as orchestrator_main
+            # Pass through args by re-invoking orchestrator
+            sys.argv = ["orchestrator.py", "run"]
+            if args.model:
+                sys.argv += ["--model", args.model]
+            if args.scores:
+                sys.argv += ["--scores", args.scores]
+            elif args.log:
+                sys.argv += ["--log", args.log]
+            if args.dry_run:
+                sys.argv += ["--dry-run"]
+            orchestrator_main()
+        else:
+            try:
+                cmd_run(args, cfg)
+            except PauseException as exc:
+                sys.exit(3)
     elif args.command == "status":
         cmd_status(args, cfg)
     else:

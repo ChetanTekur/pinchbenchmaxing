@@ -134,6 +134,10 @@ class AgentState:
     model_validated:     bool  = False
     data_gen_version:    int   = -1   # model_version at which data was last generated
 
+    # Orchestrator
+    action_history:      list  = field(default_factory=list)  # [{turn, action, result_summary, cost}]
+    budget_spent_usd:    float = 0.0
+
     @property
     def avg_score(self) -> float:
         return sum(self.scores.values()) / len(self.scores) if self.scores else 0.0
@@ -205,6 +209,8 @@ class AgentState:
             "last_analysis":       self.last_analysis,
             "model_validated":     self.model_validated,
             "data_gen_version":    self.data_gen_version,
+            "action_history":      self.action_history,
+            "budget_spent_usd":    self.budget_spent_usd,
         }
 
     @classmethod
@@ -225,6 +231,8 @@ class AgentState:
             last_analysis=        d.get("last_analysis", {}),
             model_validated=      d.get("model_validated", False),
             data_gen_version=     d.get("data_gen_version", -1),
+            action_history=       d.get("action_history", []),
+            budget_spent_usd=     d.get("budget_spent_usd", 0.0),
         )
 
 
