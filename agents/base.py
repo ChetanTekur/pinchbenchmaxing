@@ -132,6 +132,7 @@ class AgentState:
     pause_reason:        str   = ""
     last_analysis:       dict  = field(default_factory=dict)
     model_validated:     bool  = False
+    data_gen_version:    int   = -1   # model_version at which data was last generated
 
     @property
     def avg_score(self) -> float:
@@ -146,7 +147,8 @@ class AgentState:
         """Called by TrainerAgent after registering a new model version."""
         self.model_version       = version
         self.current_ollama_model = ollama_name
-        self.eval_version        = -1  # invalidate — eval needed for new model
+        self.eval_version        = -1   # invalidate — eval needed for new model
+        self.data_gen_version    = -1   # invalidate — data gen needed for new model
 
     def record_eval(self, scores: dict) -> None:
         """Called by EvalAgent after a successful eval."""
@@ -202,6 +204,7 @@ class AgentState:
             "pause_reason":        self.pause_reason,
             "last_analysis":       self.last_analysis,
             "model_validated":     self.model_validated,
+            "data_gen_version":    self.data_gen_version,
         }
 
     @classmethod
@@ -221,6 +224,7 @@ class AgentState:
             pause_reason=         d.get("pause_reason", ""),
             last_analysis=        d.get("last_analysis", {}),
             model_validated=      d.get("model_validated", False),
+            data_gen_version=     d.get("data_gen_version", -1),
         )
 
 

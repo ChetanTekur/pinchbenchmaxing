@@ -309,76 +309,85 @@ def cmd_run(args, cfg) -> None:
         else:
             consecutive_no_improve = 0
 
-        # ── STAGE 2: ANALYSIS ────────────────────────────────────────────────
-        try:
-            state = run_stage(EvalAnalysisAgent(), state, cfg)
-        except PauseException:
-            raise
-        except RuntimeError as exc:
-            pause(state, state_file,
-                  f"EvalAnalysisAgent failed: {exc}. "
-                  f"Fix the analysis error and resume before training.")
+        # ── Check if data gen already done for this model version ───────────
+        # Prevents re-generating data when restarting after a training failure
+        # (e.g. GGUF conversion ran out of disk). Without this, every restart
+        # adds another batch of examples on top of already-generated data.
+        data_already_generated = (state.data_gen_version == state.model_version)
 
-        # GATE: analysis must have produced a real diagnosis before we spend
-        # GPU money training on potentially misguided data.
-        analysis = state.last_analysis
-        if not analysis:
-            pause(state, state_file,
-                  "EvalAnalysisAgent produced no diagnosis (last_analysis is empty). "
-                  "Check EvalAnalysisAgent logs and resume when fixed.")
-        err_summary = analysis.get("summary", "")
-        if err_summary.startswith("Error:"):
-            pause(state, state_file,
-                  f"EvalAnalysisAgent diagnosis is an error: {err_summary}. "
-                  f"Fix the underlying issue and resume.")
-        if not analysis.get("root_causes") and not analysis.get("data_fixes"):
-            pause(state, state_file,
-                  "EvalAnalysisAgent returned no root_causes and no data_fixes — "
-                  "diagnosis appears empty. Review eval_analysis_*.json and resume.")
+        if data_already_generated:
+            log_print(f"[orchestrator] Data already generated for v{state.model_version} "
+                  f"— skipping analysis, data gen, and curation")
+            log_print(f"[orchestrator] Train examples: {count_train_examples(cfg)}")
+        else:
+            # ── STAGE 2: ANALYSIS ────────────────────────────────────────────
+            try:
+                state = run_stage(EvalAnalysisAgent(), state, cfg)
+            except PauseException:
+                raise
+            except RuntimeError as exc:
+                pause(state, state_file,
+                      f"EvalAnalysisAgent failed: {exc}. "
+                      f"Fix the analysis error and resume before training.")
 
-        save_state(state, state_file)
+            # GATE: analysis must have produced a real diagnosis
+            analysis = state.last_analysis
+            if not analysis:
+                pause(state, state_file,
+                      "EvalAnalysisAgent produced no diagnosis. "
+                      "Check logs and resume when fixed.")
+            err_summary = analysis.get("summary", "")
+            if err_summary.startswith("Error:"):
+                pause(state, state_file,
+                      f"EvalAnalysisAgent diagnosis error: {err_summary}")
+            if not analysis.get("root_causes") and not analysis.get("data_fixes"):
+                pause(state, state_file,
+                      "EvalAnalysisAgent returned no root_causes and no data_fixes. "
+                      "Review eval_analysis_*.json and resume.")
 
-        # ── STAGE 3: DATA ────────────────────────────────────────────────────
-        pre_count = count_train_examples(cfg)
-        try:
-            state = run_stage(DataAgent(), state, cfg)
-        except PauseException:
-            raise
-        except RuntimeError as exc:
-            stage_failed(state, state_file, "data", str(exc))
-            sys.exit(1)
+            save_state(state, state_file)
 
-        post_count = count_train_examples(cfg)
+            # ── STAGE 3: DATA ────────────────────────────────────────────────
+            pre_count = count_train_examples(cfg)
+            try:
+                state = run_stage(DataAgent(), state, cfg)
+            except PauseException:
+                raise
+            except RuntimeError as exc:
+                stage_failed(state, state_file, "data", str(exc))
+                sys.exit(1)
 
-        # GATE: must generate new examples
-        if post_count <= pre_count:
-            pause(state, state_file,
-                  f"DataAgent generated 0 new examples "
-                  f"(before={pre_count}, after={post_count}). "
-                  f"All tasks may be at target count, or topup.py failed.")
+            post_count = count_train_examples(cfg)
 
-        log_print(f"[orchestrator] New examples: {pre_count} → {post_count} "
-              f"(+{post_count - pre_count})")
-        save_state(state, state_file)
+            # GATE: must generate new examples
+            if post_count <= pre_count:
+                pause(state, state_file,
+                      f"DataAgent generated 0 new examples "
+                      f"(before={pre_count}, after={post_count}).")
 
-        # ── STAGE 4: CURATOR ─────────────────────────────────────────────────
-        try:
-            state = run_stage(CuratorAgent(), state, cfg)
-        except PauseException:
-            raise
-        except RuntimeError as exc:
-            stage_failed(state, state_file, "curator", str(exc))
-            sys.exit(1)
+            log_print(f"[orchestrator] New examples: {pre_count} → {post_count} "
+                  f"(+{post_count - pre_count})")
+            save_state(state, state_file)
 
-        # GATE: verify train.jsonl is non-empty (CuratorAgent also checks this,
-        # but belt-and-suspenders)
-        final_count = count_train_examples(cfg)
-        if final_count == 0:
-            pause(state, state_file,
-                  "train.jsonl is empty after curation. "
-                  "Lower min_judge_score in config.yaml or regenerate data.")
+            # ── STAGE 4: CURATOR ─────────────────────────────────────────────
+            try:
+                state = run_stage(CuratorAgent(), state, cfg)
+            except PauseException:
+                raise
+            except RuntimeError as exc:
+                stage_failed(state, state_file, "curator", str(exc))
+                sys.exit(1)
 
-        save_state(state, state_file)
+            # GATE: verify train.jsonl is non-empty
+            final_count = count_train_examples(cfg)
+            if final_count == 0:
+                pause(state, state_file,
+                      "train.jsonl empty after curation. "
+                      "Lower min_judge_score or regenerate data.")
+
+            # Mark data gen as complete for this model version
+            state.data_gen_version = state.model_version
+            save_state(state, state_file)
 
         # ── STAGE 5: TRAINER ─────────────────────────────────────────────────
         try:
