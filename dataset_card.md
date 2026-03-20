@@ -48,6 +48,6 @@ If you use this dataset, please cite:
   author = {Chetan Tekur},
   title = {PinchBench Clawd Training Data},
   year = {2026},
-  url = {https://huggingface.co/datasets/ChetanTekur/pinchbench-clawd},
+  url = {https://huggingface.co/datasets/cptekur/pinchbench-clawd},
 }
 ```

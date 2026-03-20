@@ -54,4 +54,4 @@ loop:
 # CuratorAgent auto-pushes after each curation pass.
 # Set HF_TOKEN env var or run: huggingface-cli login
 huggingface:
-  dataset_repo: ChetanTekur/pinchbench-clawd
+  dataset_repo: cptekur/pinchbench-clawd
