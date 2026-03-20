@@ -198,17 +198,13 @@ def cmd_run(args, cfg) -> None:
         state.record_eval(seeded)
         log_print(f"[orchestrator] Seeded {len(seeded)} scores from {args.log}.")
 
-    # ── Seed model version if running a named model ───────────────────────────
-    if args.model and not state.current_ollama_model:
+    # ── Set model version from --model flag (always overrides state) ─────────
+    if args.model:
         state.current_ollama_model = args.model
-        # Parse version number from name (e.g. qwen35-9b-clawd-v3 → 3)
-        # so TrainerAgent increments correctly (v3 → v4, not v0 → v1)
         m = re.search(r'-v(\d+)$', args.model)
         if m:
             state.model_version = int(m.group(1))
-            log_print(f"[orchestrator] Set current model to: {args.model} (version {state.model_version})")
-        else:
-            log_print(f"[orchestrator] Set current model to: {args.model}")
+        log_print(f"[orchestrator] Model: {args.model} (v{state.model_version})")
 
     max_iter  = cfg.loop.max_iterations
     target    = cfg.loop.target_score
