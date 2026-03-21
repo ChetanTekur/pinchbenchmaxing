@@ -26,7 +26,7 @@ if [ -z "${BASE_OLLAMA_MODEL:-}" ]; then
         *gemma-3-4b*)   BASE_OLLAMA_MODEL="gemma3:4b" ;;
         *gemma-3-12b*)  BASE_OLLAMA_MODEL="gemma3:12b" ;;
         *gemma-3-27b*)  BASE_OLLAMA_MODEL="gemma3:27b" ;;
-        *Qwen3.5-9B*)   BASE_OLLAMA_MODEL="qwen3:8b" ;;
+        *Qwen3.5-9B*)   BASE_OLLAMA_MODEL="qwen3.5:9b" ;;
         *Qwen3-8B*)     BASE_OLLAMA_MODEL="qwen3:8b" ;;
         *Mistral-7B*)   BASE_OLLAMA_MODEL="mistral:7b" ;;
         *Llama-3*)      BASE_OLLAMA_MODEL="llama3:8b" ;;
