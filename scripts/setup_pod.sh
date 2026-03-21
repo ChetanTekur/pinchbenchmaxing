@@ -37,19 +37,24 @@ echo "=== [4/5] Verifying OpenClaw ==="
 export PATH="$HOME/.local/bin:$HOME/.openclaw/bin:/usr/local/bin:$PATH"
 openclaw --version || echo "WARNING: openclaw not in PATH — check ~/.openclaw/bin or ~/.local/bin"
 
-echo "=== [5/5] Patching PinchBench lib_agent.py ==="
-WORKSPACE="${PBM_WORKSPACE:-./workspace}"
+echo "=== [5/5] Patching PinchBench lib_agent.py for Ollama support ==="
+WORKSPACE="${PBM_WORKSPACE:-/workspace/synthbench}"
 LIB_AGENT="$WORKSPACE/skill/scripts/lib_agent.py"
 if [ -f "$LIB_AGENT" ]; then
-    if ! grep -q '"ollama/"' "$LIB_AGENT"; then
-        echo "  Adding 'ollama/' to KNOWN_PROVIDERS..."
-        sed -i 's/KNOWN_PROVIDERS = (/KNOWN_PROVIDERS = ("ollama\/", /' "$LIB_AGENT"
+    if ! grep -q 'ollama' "$LIB_AGENT"; then
+        echo "  Patching validate_openrouter_model to skip ollama models..."
+        sed -i '/# Skip validation for non-OpenRouter models/i\
+    # Skip validation for Ollama (local) models\
+    if bare_model_id.startswith("ollama/"):\
+        logger.info("Skipping model validation for Ollama model: %s", model_id)\
+        return True\
+' "$LIB_AGENT"
         echo "  Done."
     else
-        echo "  [OK] ollama/ already in KNOWN_PROVIDERS"
+        echo "  [OK] ollama patch already applied"
     fi
 else
-    echo "  WARNING: $LIB_AGENT not found — network volume not mounted?"
+    echo "  WARNING: $LIB_AGENT not found — clone pinchbench/skill first"
 fi
 
 echo ""

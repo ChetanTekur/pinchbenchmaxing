@@ -41,8 +41,7 @@ if [ $# -lt 1 ]; then
 fi
 
 MODEL="$1"
-NO_UPLOAD=""
-[ "${2:-}" = "--no-upload" ] && NO_UPLOAD="--no-upload"
+EXTRA_FLAGS="${@:2}"
 
 # Derive a filesystem-safe name for log files (replace / : with _)
 SAFE_NAME=$(echo "$MODEL" | tr '/: ' '___')
@@ -103,7 +102,8 @@ echo ""
 
 # ── Run benchmark ─────────────────────────────────────────────────────────────
 cd "$BENCH_DIR"
-./scripts/run.sh --model "$MODEL" $NO_UPLOAD 2>&1 | tee "$LOG_FILE"
+JUDGE="${PBM_JUDGE_MODEL:-openrouter/anthropic/claude-opus-4.5}"
+./scripts/run.sh --model "$MODEL" --judge "$JUDGE" $EXTRA_FLAGS 2>&1 | tee "$LOG_FILE"
 EXIT_CODE=${PIPESTATUS[0]}
 
 echo ""
