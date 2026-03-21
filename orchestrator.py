@@ -518,8 +518,9 @@ def main():
             state.record_eval(seeded)
             log_print(f"[ORCHESTRATOR AGENT] Seeded {len(seeded)} scores from {args.log}")
 
-        # Clear action history for new session (keeps budget tracking)
+        # Fresh session — reset budget and action history
         state.action_history = []
+        state.budget_spent_usd = 0.0
 
         save_state(state, state_file)
         run_orchestrator(cfg, state, state_file, dry_run=args.dry_run)
