@@ -227,11 +227,80 @@ Examine the state above and take ONE action. Call a tool, or respond with "DONE:
 def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = False):
     from tools.registry import TOOL_SCHEMAS, execute_tool
 
+    # ── Preflight checks — verify environment before any work ────────────
+    log_print(f"\n{'='*62}")
+    log_print(f"  ORCHESTRATOR AGENT — PREFLIGHT")
+    log_print(f"{'='*62}")
+
+    # 1. API key
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        log_print("[ORCHESTRATOR AGENT] ERROR: ANTHROPIC_API_KEY not set")
+        log_print("[PREFLIGHT] FAIL: ANTHROPIC_API_KEY not set")
         sys.exit(1)
+    log_print("[PREFLIGHT] OK: ANTHROPIC_API_KEY set")
 
+    # 2. CUDA / GPU
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            vram_gb = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+            cuda_ver = torch.version.cuda
+            # Test kernel compatibility
+            try:
+                t = torch.zeros(1, device="cuda")
+                del t
+                log_print(f"[PREFLIGHT] OK: GPU {gpu_name} ({vram_gb:.0f} GB, CUDA {cuda_ver})")
+            except RuntimeError as e:
+                log_print(f"[PREFLIGHT] FAIL: GPU {gpu_name} CUDA kernel incompatible")
+                log_print(f"  Error: {e}")
+                log_print(f"  Docker image CUDA doesn't match this GPU.")
+                log_print(f"  Fix: pip install --force-reinstall torch --index-url "
+                          f"https://download.pytorch.org/whl/cu{cuda_ver.replace('.','')[:3]}")
+                sys.exit(1)
+        else:
+            log_print("[PREFLIGHT] WARN: No CUDA GPU detected — training will fail")
+    except ImportError:
+        log_print("[PREFLIGHT] WARN: PyTorch not installed — training will fail")
+
+    # 3. Disk space
+    import shutil
+    workspace = cfg.workspace
+    if workspace.exists():
+        free_gb = shutil.disk_usage(str(workspace)).free / (1024**3)
+        if free_gb < 10:
+            log_print(f"[PREFLIGHT] FAIL: Only {free_gb:.1f} GB free on workspace (need ≥10)")
+            sys.exit(1)
+        log_print(f"[PREFLIGHT] OK: {free_gb:.0f} GB free on workspace")
+    else:
+        log_print(f"[PREFLIGHT] WARN: Workspace {workspace} not found")
+
+    # 4. Ollama running
+    try:
+        import httpx
+        r = httpx.get("http://127.0.0.1:11434/", timeout=5)
+        log_print("[PREFLIGHT] OK: Ollama running")
+    except Exception:
+        log_print("[PREFLIGHT] WARN: Ollama not running — benchmark will fail")
+
+    # 5. OpenClaw gateway
+    try:
+        r = httpx.get("http://127.0.0.1:18789/health", timeout=5)
+        log_print("[PREFLIGHT] OK: OpenClaw gateway running")
+    except Exception:
+        log_print("[PREFLIGHT] WARN: OpenClaw gateway not running — benchmark will fail")
+
+    # 6. Data files exist
+    if cfg.train_file.exists():
+        n_train = sum(1 for l in cfg.train_file.read_text().splitlines() if l.strip())
+        log_print(f"[PREFLIGHT] OK: train.jsonl exists ({n_train} examples)")
+    else:
+        log_print("[PREFLIGHT] INFO: No train.jsonl yet — will need to generate data")
+
+    log_print(f"[PREFLIGHT] All checks passed")
+    log_print("")
+
+    # ── Start orchestrator ─────────────────────────────────────────────────
     client = anthropic.Anthropic(api_key=api_key)
     model = cfg.orchestrator.model
     max_actions = cfg.orchestrator.max_actions
@@ -240,7 +309,7 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
     system_prompt = build_system_prompt(cfg)
     consecutive_failures = 0
 
-    log_print(f"\n{'='*62}")
+    log_print(f"{'='*62}")
     log_print(f"  ORCHESTRATOR AGENT")
     log_print(f"  Claude model : {model}")
     log_print(f"  Budget       : ${budget_total}")
