@@ -1,13 +1,13 @@
 # Claude Code Rules for Synthdata / PinchBench
 
-## Give minimal, accurate pod instructions
+## Give accurate pod instructions — verify before suggesting
 Before giving the user any shell commands to run on the pod:
 1. **Verify the command is correct** — check the actual script flags, paths, and arguments by reading the code. Do not guess.
-2. **Give the minimum necessary** — don't suggest running setup_pod.sh when a one-liner will do. Don't add flags that aren't needed.
-3. **Commit and push first** — never give pod commands unless the relevant code changes are already pushed to GitHub.
-4. **Test your reasoning** — if a script already has a default, don't redundantly pass it. If a tool already handles something, don't add a manual step.
+2. **Commit and push first** — never give pod commands unless the relevant code changes are already pushed to GitHub.
+3. **Don't redundantly pass defaults** — if a script already has a sensible default, don't add the flag.
+4. **When unsure about external tools** — use WebFetch to check the actual source code rather than guessing CLI flags.
 
-The user's time on the pod costs real money. Every wrong or unnecessary instruction wastes it.
+The user's time on the pod costs real money. Every wrong instruction wastes it.
 
 ## Always update BOTH scripts AND Dockerfile simultaneously
 Any fix that touches a script (`scripts/`, `stages/`) must also be reflected in the Dockerfile if it affects installed packages, system deps, or PATH. Never fix one without checking the other. Same applies to setup_pod.sh.
