@@ -51,9 +51,12 @@ def _format_result(tool_name: str, r: dict) -> str:
 
     if tool_name == "inspect_data":
         total = r.get("total", "?")
+        missing = r.get("missing_tasks", [])
         overweight = r.get("overweight", [])
         underweight = r.get("underweight", [])
         parts = [f"{total} examples"]
+        if missing:
+            parts.append(f"MISSING ({len(missing)} tasks with 0 examples): {missing}")
         if overweight:
             parts.append(f"overweight: {overweight}")
         if underweight:

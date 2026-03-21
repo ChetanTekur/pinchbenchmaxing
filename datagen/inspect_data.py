@@ -15,6 +15,7 @@ from pathlib import Path
 from collections import defaultdict
 from utils.config import load_config
 from utils.prompts import VALID_TOOLS
+from agents.base import TASK_IDS
 
 _cfg       = load_config()
 TRAIN_FILE = _cfg.train_file
@@ -133,12 +134,22 @@ def cmd_stats():
     print(f"  Avg chars:    {total_chars/len(records):,.0f} per example")
     print(f"  Total tokens: ~{total_chars//4:,} (rough estimate)")
     print()
+    # Show ALL 23 tasks, including those with zero examples
+    missing = [t for t in TASK_IDS if t not in by_task]
     print(f"  {'Task':<40} {'Count':>6}")
     print(f"  {'─'*40} {'─'*6}")
-    for task_id in sorted(by_task):
-        count = len(by_task[task_id])
+    for task_id in TASK_IDS:
+        count = len(by_task.get(task_id, []))
         bar   = "█" * (count // 3)
-        print(f"  {task_id:<40} {count:>5}  {bar}")
+        marker = "  ⚠ MISSING" if count == 0 else ""
+        print(f"  {task_id:<40} {count:>5}  {bar}{marker}")
+    # Also show any unknown task IDs in the data
+    unknown = sorted(set(by_task.keys()) - set(TASK_IDS))
+    for task_id in unknown:
+        count = len(by_task[task_id])
+        print(f"  {task_id:<40} {count:>5}  (unknown task)")
+    if missing:
+        print(f"\n  ⚠ {len(missing)} tasks have ZERO examples: {', '.join(missing)}")
     print()
 
 

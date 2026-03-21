@@ -49,6 +49,8 @@ def inspect_data(args: dict, cfg, state) -> dict:
     """Inspect the training dataset and return statistics."""
     try:
         import re
+        from agents.base import TASK_IDS
+
         rc, output = _run_script(
             [sys.executable, "-m", "datagen.inspect_data", "stats"],
             "inspect_data",
@@ -62,11 +64,16 @@ def inspect_data(args: dict, cfg, state) -> dict:
             if m:
                 by_task[m.group(1)] = int(m.group(2))
 
+        # Ensure ALL 23 tasks are represented (zeros included)
+        for task_id in TASK_IDS:
+            if task_id not in by_task:
+                by_task[task_id] = 0
+
         total = sum(by_task.values())
         counts = list(by_task.values())
+        missing = [t for t in TASK_IDS if by_task.get(t, 0) == 0]
 
         if counts:
-            avg = total / len(counts)
             min_count = min(counts)
             max_count = max(counts)
             balance_ratio = round(min_count / max_count, 3) if max_count > 0 else 0.0
@@ -86,6 +93,7 @@ def inspect_data(args: dict, cfg, state) -> dict:
                 "balance_ratio": balance_ratio,
                 "overweight": overweight,
                 "underweight": underweight,
+                "missing_tasks": missing,
             },
             "cost_usd": 0.0,
         }
