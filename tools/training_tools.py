@@ -45,11 +45,51 @@ def _run_script(cmd: list[str], label: str, env: dict | None = None) -> tuple[in
 
 # ── train ────────────────────────────────────────────────────────────────────
 
+def _check_cuda_compatibility() -> dict:
+    """Verify CUDA/GPU compatibility before training. Catches mismatches early."""
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return {"ok": False, "error": "CUDA not available — no GPU detected"}
+
+        gpu_name = torch.cuda.get_device_name(0)
+        cuda_version = torch.version.cuda
+        torch_version = torch.__version__
+
+        # Quick test: try allocating a small tensor on GPU
+        try:
+            t = torch.zeros(1, device="cuda")
+            del t
+        except RuntimeError as e:
+            return {
+                "ok": False,
+                "error": f"CUDA kernel error on {gpu_name} (CUDA {cuda_version}, "
+                         f"PyTorch {torch_version}): {e}. "
+                         f"The Docker image may not support this GPU. "
+                         f"Try: pip install --force-reinstall torch --index-url "
+                         f"https://download.pytorch.org/whl/cu{cuda_version.replace('.', '')[:3]}"
+            }
+
+        vram_gb = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+        log_print(f"  [preflight] GPU: {gpu_name} ({vram_gb:.0f} GB)")
+        log_print(f"  [preflight] CUDA: {cuda_version}, PyTorch: {torch_version}")
+
+        return {"ok": True, "gpu": gpu_name, "vram_gb": round(vram_gb, 1),
+                "cuda": cuda_version, "torch": torch_version}
+    except Exception as e:
+        return {"ok": False, "error": f"GPU check failed: {e}"}
+
+
 def train(args: dict, cfg, state) -> dict:
     """Fine-tune the model: prepare SFT data, run Unsloth LoRA training."""
     try:
+        # Preflight: check CUDA compatibility before spending time
+        cuda_check = _check_cuda_compatibility()
+        if not cuda_check["ok"]:
+            return {"status": "error", "error": cuda_check["error"]}
+
         version = args["version"]
-        base_name = cfg._data["model"]["name"]
+        base_name = cfg._data["model"]["name"]  # unversioned base name
         versioned_name = f"{base_name}-v{version}"
 
         log_print(f"  [train] Training {versioned_name}")
@@ -109,6 +149,10 @@ def train(args: dict, cfg, state) -> dict:
 def convert(args: dict, cfg, state) -> dict:
     """Convert a fine-tuned model to GGUF format."""
     try:
+        cuda_check = _check_cuda_compatibility()
+        if not cuda_check["ok"]:
+            return {"status": "error", "error": cuda_check["error"]}
+
         version = args["version"]
         base_name = cfg._data["model"]["name"]
         versioned_name = f"{base_name}-v{version}"
