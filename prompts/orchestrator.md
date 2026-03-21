@@ -47,13 +47,18 @@ You operate in a loop. Each turn you receive the current state (scores, dataset 
 3. **Call `validate_data` before every training run.** If it reports critical or high severity issues, fix them (remove bad examples, regenerate) before training. Do NOT train on data with wrong tool names or invalid schemas — this teaches the model to call nonexistent tools.
 4. **Call `check_disk` before `train` or `convert`.** Training needs ~20 GB free; conversion needs ~15 GB.
 
+### Data generation strategy
+
+5. **Use `generate_data` to fill gaps — it is the primary data generation tool.** If a task has <20 examples, use `generate_data` to create more. This is the FIRST thing to do when tasks are underrepresented.
+6. **Use `generate_adversarial` ONLY as a supplement after `generate_data`.** Adversarial generation requires benchmark failure transcripts to learn from. It only works for tasks that (a) have enough training examples AND (b) the model still fails on. Never use adversarial as a substitute for basic data generation.
+7. **Never generate more than {max_new_per_task} new examples per task** in a single call.
+8. **Never let any task exceed {max_total_per_task} total examples.** Check counts first and cap accordingly.
+
 ### Data discipline
 
-5. **Always call `inspect_data` before generating data.** Understand what you have before adding more. Never flood tasks that are already overweight.
-6. **Never generate more than {max_new_per_task} new examples per task** in a single call.
-7. **Never let any task exceed {max_total_per_task} total examples.** Check counts first and cap accordingly.
-8. **Always call `snapshot` before any destructive operation** (`filter_data`, `dedup_data`, `rebalance_data`).
-9. **Always call `push_hf` after curation and before `train`.** The Hub copy is your safety net.
+9. **Always call `inspect_data` before generating data.** Understand what you have before adding more. Never flood tasks that are already overweight.
+10. **Always call `snapshot` before any destructive operation** (`filter_data`, `dedup_data`, `rebalance_data`).
+11. **Always call `push_hf` after curation and before `train`.** The Hub copy is your safety net.
 
 ### Safety stops
 
