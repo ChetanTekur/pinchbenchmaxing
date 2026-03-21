@@ -87,6 +87,10 @@ def train(args: dict, cfg, state) -> dict:
                 loss_final = float(m.group(1))
                 break
 
+        # Update state with new model version
+        state.record_model(version, versioned_name)
+        log_print(f"  [train] Done: {versioned_name}, loss={loss_final}, {duration_minutes}min")
+
         return {
             "status": "success",
             "result": {
@@ -94,7 +98,7 @@ def train(args: dict, cfg, state) -> dict:
                 "loss_final": loss_final,
                 "duration_minutes": duration_minutes,
             },
-            "cost_usd": 0.0,  # GPU cost is paid via RunPod, not per-call
+            "cost_usd": 0.0,
         }
     except Exception as e:
         return {"status": "error", "error": str(e)}
@@ -262,8 +266,14 @@ def benchmark(args: dict, cfg, state) -> dict:
 
         avg_score = round(sum(scores.values()) / len(scores), 4) if scores else 0.0
 
+        # Update state with benchmark results
+        if scores:
+            state.record_eval(scores)
+            state.weak_tasks = [t for t in TASK_IDS if t in scores
+                                and scores[t] < 0.5]  # threshold from config ideally
+
         return {
-            "status": "success" if rc == 0 else "error",
+            "status": "success" if scores else "error",
             "result": {
                 "scores": scores,
                 "avg_score": avg_score,

@@ -315,6 +315,18 @@ TOOL_SCHEMAS = [
         },
     },
     {
+        "name": "validate_model",
+        "description": (
+            "Validate that the base model is suitable for fine-tuning. "
+            "Checks HuggingFace existence, architecture, Unsloth support, tokenizer."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
         "name": "check_disk",
         "description": (
             "Check available disk space on workspace and root partitions. "
@@ -395,6 +407,7 @@ _DISPATCH = {
     "convert":              convert,
     "register":             register,
     "check_disk":           check_disk,
+    "validate_model":       validate_model,
     "push_hf":              push_hf,
     "get_state":            get_state,
     "request_approval":     request_approval,

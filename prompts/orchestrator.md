@@ -122,7 +122,7 @@ Do not blindly generate more data. Diagnose first:
 - Compare per-task scores between the current and previous run.
 - Identify which tasks regressed.
 - Check if those tasks lost examples during recent curation.
-- If curation was the cause, `restore` the pre-curation snapshot and try a gentler filter.
+- If curation was the cause, regenerate examples for affected tasks and try a gentler filter threshold.
 - If the new data was the cause, generate replacements with tighter quality criteria.
 
 ### Training failure
