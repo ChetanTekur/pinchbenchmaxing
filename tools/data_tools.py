@@ -15,9 +15,40 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from agents.base import log_print, _write_log
+from agents.base import log_print, _write_log, TASK_IDS
 
 _PROJECT_ROOT = Path(__file__).parent.parent
+
+
+def _post_curation_check(train_file: Path, min_per_task: int = 40) -> dict | None:
+    """Check if any task dropped below min after a curation step.
+    Returns None if OK, or a warning dict with tasks that need data."""
+    from collections import Counter
+    counts = Counter()
+    if train_file.exists():
+        for line in train_file.read_text().splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    rec = json.loads(line)
+                    counts[rec.get("task_id", "unknown")] += 1
+                except json.JSONDecodeError:
+                    pass
+
+    missing = [t for t in TASK_IDS if counts.get(t, 0) == 0]
+    below_min = {t: counts.get(t, 0) for t in TASK_IDS if 0 < counts.get(t, 0) < min_per_task}
+
+    if missing or below_min:
+        return {
+            "missing_tasks": missing,
+            "below_min_tasks": below_min,
+            "warning": (
+                f"Curation dropped coverage! "
+                f"{len(missing)} tasks now at 0, {len(below_min)} below {min_per_task}. "
+                f"Run generate_data to backfill before training."
+            ),
+        }
+    return None
 
 
 def _run_script(cmd: list[str], label: str, env: dict | None = None) -> tuple[int, str]:
@@ -124,18 +155,24 @@ def inspect_data(args: dict, cfg, state) -> dict:
             overweight = []
             underweight = []
 
-        return {
-            "status": "success",
-            "result": {
-                "total": total,
-                "per_task": by_task,
-                "balance_ratio": balance_ratio,
-                "overweight": overweight,
-                "underweight": underweight,
-                "missing_tasks": missing,
-            },
-            "cost_usd": 0.0,
+        result = {
+            "total": total,
+            "per_task": by_task,
+            "balance_ratio": balance_ratio,
+            "overweight": overweight,
+            "underweight": underweight,
+            "missing_tasks": missing,
         }
+
+        # Cache in state so turn context always shows data status
+        state.last_data_summary = {
+            "total": total,
+            "missing": missing,
+            "below_40": {t: c for t, c in by_task.items() if 0 < c < 40},
+            "timestamp": datetime.now().strftime("%H:%M:%S"),
+        }
+
+        return {"status": "success", "result": result, "cost_usd": 0.0}
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -290,14 +327,16 @@ def filter_data(args: dict, cfg, state) -> dict:
 
         removed = before - after
 
-        return {
-            "status": "success",
-            "result": {
-                "kept": after,
-                "removed": removed,
-            },
-            "cost_usd": 0.0,
-        }
+        result = {"kept": after, "removed": removed}
+
+        # Post-curation coverage check
+        coverage = _post_curation_check(train_file)
+        if coverage:
+            result["coverage_warning"] = coverage["warning"]
+            result["needs_backfill"] = coverage
+            log_print(f"  [filter_data] ⚠ {coverage['warning']}")
+
+        return {"status": "success", "result": result, "cost_usd": 0.0}
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -379,16 +418,21 @@ def dedup_data(args: dict, cfg, state) -> dict:
             removed = before - after
             percent = round(removed / before * 100, 1) if before > 0 else 0
 
-        return {
-            "status": "success",
-            "result": {
-                "before": before,
-                "after": after,
-                "removed": removed,
-                "percent": percent,
-            },
-            "cost_usd": 0.0,
+        result = {
+            "before": before,
+            "after": after,
+            "removed": removed,
+            "percent": percent,
         }
+
+        # Post-curation coverage check
+        coverage = _post_curation_check(train_file)
+        if coverage:
+            result["coverage_warning"] = coverage["warning"]
+            result["needs_backfill"] = coverage
+            log_print(f"  [dedup_data] ⚠ {coverage['warning']}")
+
+        return {"status": "success", "result": result, "cost_usd": 0.0}
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -427,14 +471,23 @@ def rebalance_data(args: dict, cfg, state) -> dict:
             if m:
                 per_task[m.group(1)] = int(m.group(2))
 
+        result = {
+            "before": before,
+            "after": after,
+            "trimmed": before - after,
+            "per_task": per_task,
+        }
+
+        # Post-curation coverage check
+        coverage = _post_curation_check(train_file)
+        if coverage:
+            result["coverage_warning"] = coverage["warning"]
+            result["needs_backfill"] = coverage
+            log_print(f"  [rebalance_data] ⚠ {coverage['warning']}")
+
         return {
             "status": "success",
-            "result": {
-                "before": before,
-                "after": after,
-                "trimmed": before - after,
-                "per_task": per_task,
-            },
+            "result": result,
             "cost_usd": 0.0,
         }
     except Exception as e:

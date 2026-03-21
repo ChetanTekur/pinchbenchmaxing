@@ -139,6 +139,7 @@ class AgentState:
     budget_spent_usd:    float = 0.0
     base_model:          str   = ""   # tracks which HF model this state is for
     scratchpad:          list  = field(default_factory=list)  # [{timestamp, note}] — agent's working memory
+    last_data_summary:   dict  = field(default_factory=dict)  # cached inspect_data result
 
     @property
     def avg_score(self) -> float:
@@ -215,6 +216,7 @@ class AgentState:
             "budget_spent_usd":    self.budget_spent_usd,
             "base_model":          self.base_model,
             "scratchpad":          self.scratchpad,
+            "last_data_summary":   self.last_data_summary,
         }
 
     @classmethod
@@ -239,6 +241,7 @@ class AgentState:
             budget_spent_usd=     d.get("budget_spent_usd", 0.0),
             base_model=           d.get("base_model", ""),
             scratchpad=           d.get("scratchpad", []),
+            last_data_summary=    d.get("last_data_summary", {}),
         )
 
 

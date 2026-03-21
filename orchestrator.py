@@ -223,6 +223,23 @@ def build_turn_context(state: AgentState, cfg) -> str:
             f"  [{n['timestamp']}] {n['note']}" for n in state.scratchpad[-10:]
         )
 
+    # Data state summary (from last inspect_data call)
+    data_status = "(unknown — call inspect_data first)"
+    ds = state.last_data_summary
+    if ds:
+        missing = ds.get("missing", [])
+        below = ds.get("below_40", {})
+        total = ds.get("total", 0)
+        ts = ds.get("timestamp", "?")
+        parts = [f"{total} examples (as of {ts})"]
+        if missing:
+            parts.append(f"⚠ MISSING ({len(missing)} tasks with 0 examples): {missing}")
+        if below:
+            parts.append(f"⚠ BELOW MIN ({len(below)} tasks < 40): {below}")
+        if not missing and not below:
+            parts.append("✓ All 23 tasks have ≥40 examples")
+        data_status = "\n  ".join(parts)
+
     return f"""## Current State
 
 Model: v{state.model_version} ({state.current_ollama_model or 'none'})
@@ -231,6 +248,9 @@ Best ever: {state.best_avg_score:.3f} (v{state.best_version})
 Target: {cfg.loop.target_score}
 Iteration: {state.iteration}
 Budget remaining: ${budget_remaining:.2f}
+
+## Data Status
+  {data_status}
 
 ## Scores
 {scores_summary or '(no scores yet)'}
@@ -446,6 +466,18 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
             error_msg = result.get("error", "unknown error")
             log_print(f"[ORCHESTRATOR AGENT] FAILED: {error_msg[:300]}")
             result_summary = f"ERROR: {error_msg[:200]}"
+
+            # Auto-write scratchpad note on failure so next turn sees it
+            auto_note = f"{tool_name} FAILED: {error_msg[:150]}"
+            if "BLOCKED" in error_msg:
+                auto_note += " → FIX: call generate_data for the listed tasks"
+                consecutive_failures -= 1  # BLOCKED is recoverable, don't count it
+            elif "out of memory" in error_msg.lower() or "cuda" in error_msg.lower():
+                auto_note += " → FIX: may need smaller batch_size or seq_len"
+            state.scratchpad.append({
+                "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
+                "note": auto_note,
+            })
         else:
             consecutive_failures = 0
             r = result.get("result", {})
@@ -468,6 +500,20 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
 
         # Some tools update state directly (benchmark updates scores, train updates version)
         # The tool implementations handle this via the state object passed to them
+
+        # ── Score regression check after benchmark ────────────────────────
+        if tool_name == "benchmark" and status == "success" and state.best_avg_score > 0:
+            regression_pct = (state.best_avg_score - state.avg_score) / state.best_avg_score * 100
+            threshold = cfg.orchestrator.auto_pause.score_regression_pct
+            if regression_pct > threshold:
+                log_print(f"\n[ORCHESTRATOR AGENT] ⚠ SCORE REGRESSION: {regression_pct:.1f}% "
+                          f"below best ({state.best_avg_score:.3f} → {state.avg_score:.3f})")
+                state.scratchpad.append({
+                    "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
+                    "note": f"REGRESSION {regression_pct:.1f}%: score dropped from "
+                            f"{state.best_avg_score:.3f} to {state.avg_score:.3f}. "
+                            f"Diagnose before continuing. Do NOT blindly retrain.",
+                })
 
         save_state(state, state_file)
 

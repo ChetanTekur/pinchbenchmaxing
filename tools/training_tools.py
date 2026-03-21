@@ -119,7 +119,17 @@ def _check_data_coverage(cfg) -> dict:
         )
 
     if errors:
-        return {"ok": False, "error": " | ".join(errors)}
+        # Include actionable fix so orchestrator knows exactly what to do
+        all_tasks_to_fix = missing + list(below_min.keys())
+        return {
+            "ok": False,
+            "error": " | ".join(errors),
+            "fix": {
+                "tool": "generate_data",
+                "tasks": all_tasks_to_fix,
+                "min_per_task": min_per_task,
+            },
+        }
 
     return {"ok": True, "task_counts": dict(counts)}
 
@@ -329,6 +339,7 @@ def benchmark(args: dict, cfg, state) -> dict:
         rc, output = _run_script(
             ["bash", script, ollama_model],
             "benchmark",
+            env={"PBM_WORKSPACE": str(cfg.workspace)},
         )
 
         # Find the log file

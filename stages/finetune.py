@@ -22,25 +22,26 @@ def load_jsonl(path: Path) -> list[dict]:
     return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
 
 
-def auto_batch_size(config_batch: int, model_vram_gb: float = 15.0) -> tuple[int, int]:
+def auto_batch_size(config_batch: int) -> tuple[int, int]:
     """
-    Maximize batch size based on available GPU VRAM without triggering
-    gradient offloading (which kills throughput).
+    Calculate batch size based on ACTUAL free GPU VRAM after model loading.
 
-    Strategy: stay under ~60% of free VRAM to avoid Unsloth's auto-offload.
-    ~3-4 GB per batch item for 9B model with LoRA (conservative estimate
-    that accounts for activations, optimizer states, and grad buffers).
+    Called AFTER model is loaded so we measure real free VRAM, not a guess.
+    Targets effective batch ~32 via grad_accum.
+    ~2 GB per batch item for 9B 4-bit LoRA (activations + grad buffers).
     """
     try:
         import torch
         if torch.cuda.is_available():
             total_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            free_vram = total_vram - model_vram_gb
+            allocated = torch.cuda.memory_allocated(0) / (1024**3)
+            reserved = torch.cuda.memory_reserved(0) / (1024**3)
+            free_vram = total_vram - reserved
 
-            # Conservative: 4 GB per batch item avoids gradient offloading
-            # Use only 60% of free VRAM to leave headroom
-            usable_vram = free_vram * 0.8
-            max_batch = max(2, int(usable_vram / 4))
+            # ~2 GB per batch item for 4-bit LoRA (measured empirically)
+            # Use 70% of free VRAM to leave headroom for optimizer states
+            usable_vram = free_vram * 0.7
+            max_batch = max(2, int(usable_vram / 2))
             # Cap at 16 — beyond this, offloading kicks in on most GPUs
             batch_size = min(max_batch, 16)
             # Adjust grad_accum to keep effective batch ~32
@@ -48,8 +49,9 @@ def auto_batch_size(config_batch: int, model_vram_gb: float = 15.0) -> tuple[int
             grad_accum = max(1, effective_target // batch_size)
 
             print(f"GPU        : {torch.cuda.get_device_name(0)}")
-            print(f"VRAM       : {total_vram:.0f} GB total, ~{free_vram:.0f} GB free")
-            print(f"Batch size : {config_batch} (config) → {batch_size} (auto, no offload)")
+            print(f"VRAM       : {total_vram:.0f} GB total, {allocated:.1f} GB allocated, "
+                  f"{free_vram:.0f} GB free")
+            print(f"Batch size : {config_batch} (config) → {batch_size} (auto)")
             print(f"Grad accum : {grad_accum} (effective batch = {batch_size * grad_accum})")
             return batch_size, grad_accum
     except Exception:
@@ -73,9 +75,6 @@ def main():
     print(f"Output     : {cfg.adapter_dir}")
     print(f"Train data : {cfg.train_sft_file}")
     print(f"Val data   : {cfg.val_sft_file}")
-
-    # Auto-maximize batch size based on hardware
-    batch_size, grad_accum = auto_batch_size(int(t["batch_size"]))
     print()
 
     for path in [cfg.train_sft_file, cfg.val_sft_file]:
@@ -106,6 +105,9 @@ def main():
         random_state   =42,
     )
     model.print_trainable_parameters()
+
+    # Auto batch size AFTER model loaded — measures actual free VRAM
+    batch_size, grad_accum = auto_batch_size(int(t["batch_size"]))
 
     train_dataset = Dataset.from_list(load_jsonl(cfg.train_sft_file))
     val_dataset   = Dataset.from_list(load_jsonl(cfg.val_sft_file))
@@ -161,6 +163,44 @@ def main():
 
     from unsloth.chat_templates import train_on_responses_only
 
+    # ── Verify chat template markers before training ────────────────────
+    # If these don't match, train_on_responses_only silently becomes a
+    # no-op and the model trains on full text (including user turns).
+    test_msgs = [
+        {"role": "user", "content": "test"},
+        {"role": "assistant", "content": "reply"},
+    ]
+    try:
+        formatted = tokenizer.apply_chat_template(
+            test_msgs, tokenize=False, add_generation_prompt=False,
+            enable_thinking=False,
+        )
+    except TypeError:
+        formatted = tokenizer.apply_chat_template(
+            test_msgs, tokenize=False, add_generation_prompt=False,
+        )
+
+    instruction_marker = "<|im_start|>user\n"
+    response_marker = "<|im_start|>assistant\n"
+
+    if instruction_marker not in formatted:
+        print(f"\n⚠ WARNING: instruction_part '{instruction_marker}' NOT FOUND in chat template!")
+        print(f"  Actual template:\n{repr(formatted)}")
+        print(f"  train_on_responses_only will be a NO-OP — model will train on ALL tokens!")
+        raise RuntimeError(
+            f"Chat template mismatch: '{instruction_marker}' not in tokenizer output. "
+            f"Update instruction_part/response_part in finetune.py to match."
+        )
+    if response_marker not in formatted:
+        print(f"\n⚠ WARNING: response_part '{response_marker}' NOT FOUND in chat template!")
+        print(f"  Actual template:\n{repr(formatted)}")
+        raise RuntimeError(
+            f"Chat template mismatch: '{response_marker}' not in tokenizer output."
+        )
+    print(f"\n✓ Chat template markers verified:")
+    print(f"  instruction: '{instruction_marker}' — found")
+    print(f"  response:    '{response_marker}' — found")
+
     trainer = SFTTrainer(
         model         =model,
         tokenizer     =tokenizer,
@@ -170,8 +210,8 @@ def main():
     )
     trainer = train_on_responses_only(
         trainer,
-        instruction_part="<|im_start|>user\n",
-        response_part   ="<|im_start|>assistant\n",
+        instruction_part=instruction_marker,
+        response_part   =response_marker,
     )
 
     print("\nStarting training ...")
