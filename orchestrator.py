@@ -328,6 +328,18 @@ def main():
         state_file = cfg.data_dir / STATE_FILE_NAME
         state = load_state(state_file)
 
+        # Auto-detect model change — if config.yaml model differs from what's
+        # in state, the user switched models. Reset to avoid stale history.
+        raw_state = state.to_dict()
+        old_base = raw_state.get("base_model", "")
+        if old_base and old_base != cfg.base_model:
+            log_print(f"[ORCHESTRATOR AGENT] Model changed: {old_base} → {cfg.base_model}")
+            log_print(f"[ORCHESTRATOR AGENT] Resetting state for new model")
+            state = AgentState()
+
+        # Stamp which base model this state belongs to
+        state.base_model = cfg.base_model
+
         # Seed model
         if args.model:
             state.current_ollama_model = args.model

@@ -137,6 +137,7 @@ class AgentState:
     # Orchestrator
     action_history:      list  = field(default_factory=list)  # [{turn, action, result_summary, cost}]
     budget_spent_usd:    float = 0.0
+    base_model:          str   = ""   # tracks which HF model this state is for
 
     @property
     def avg_score(self) -> float:
@@ -211,6 +212,7 @@ class AgentState:
             "data_gen_version":    self.data_gen_version,
             "action_history":      self.action_history,
             "budget_spent_usd":    self.budget_spent_usd,
+            "base_model":          self.base_model,
         }
 
     @classmethod
@@ -233,6 +235,7 @@ class AgentState:
             data_gen_version=     d.get("data_gen_version", -1),
             action_history=       d.get("action_history", []),
             budget_spent_usd=     d.get("budget_spent_usd", 0.0),
+            base_model=           d.get("base_model", ""),
         )
 
 
