@@ -223,7 +223,8 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
         if not tool_use_block:
             # Claude responded with text but no DONE and no tool call
             if text_block:
-                log_print(f"[ORCHESTRATOR AGENT] Claude says: {text_block.text[:200]}")
+                for line in text_block.text.strip().splitlines():
+                    log_print(f"[ORCHESTRATOR AGENT] {line}")
             continue
 
         # ── Execute tool ───────────────────────────────────────────────────
@@ -232,7 +233,10 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
 
         # Show Claude's reasoning if it explained before calling the tool
         if text_block and text_block.text and text_block.text.strip():
-            log_print(f"[ORCHESTRATOR AGENT] Thinking: {text_block.text.strip()[:200]}")
+            thinking = text_block.text.strip()
+            # Show full reasoning, not truncated
+            for line in thinking.splitlines():
+                log_print(f"[ORCHESTRATOR AGENT] Thinking: {line}")
 
         args_str = json.dumps(tool_args, default=str)
         if len(args_str) > 100:
