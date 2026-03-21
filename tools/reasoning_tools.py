@@ -178,17 +178,21 @@ def diagnose(args: dict, cfg, state) -> dict:
 
         current_score = round(state.avg_score, 3) if state.scores else "N/A"
 
-        prompt = template.format(
-            model_version=state.model_version,
-            current_score=current_score,
-            target_score=target_score,
-            scores_json=json.dumps(state.scores, indent=2),
-            model_history_json=json.dumps(state.model_history, indent=2),
-            dataset_stats_json=json.dumps(dataset_stats, indent=2),
-            validation_issues_json=json.dumps(validation_issues, indent=2),
-            judge_summary_json=json.dumps(judge_summary, indent=2),
-            benchmark_log_excerpt=benchmark_excerpt,
-        )
+        # Safe variable substitution (doesn't break on literal {} in markdown)
+        variables = {
+            "model_version": str(state.model_version),
+            "current_score": str(current_score),
+            "target_score": str(target_score),
+            "scores_json": json.dumps(state.scores, indent=2),
+            "model_history_json": json.dumps(state.model_history, indent=2),
+            "dataset_stats_json": json.dumps(dataset_stats, indent=2),
+            "validation_issues_json": json.dumps(validation_issues, indent=2),
+            "judge_summary_json": json.dumps(judge_summary, indent=2),
+            "benchmark_log_excerpt": benchmark_excerpt,
+        }
+        prompt = template
+        for key, value in variables.items():
+            prompt = prompt.replace("{" + key + "}", value)
 
         # Call Claude
         log_print("  [diagnose] Calling Claude for diagnosis...")
@@ -272,15 +276,19 @@ def plan_strategy(args: dict, cfg, state) -> dict:
         except AttributeError:
             total_cap = 300
 
-        prompt = template.format(
-            target_score=target_score,
-            diagnosis_json=json.dumps(diagnosis, indent=2),
-            dataset_stats_json=json.dumps(dataset_stats, indent=2),
-            scores_json=json.dumps(state.scores, indent=2),
-            max_new_per_task=max_new_per_task,
-            max_total_per_task=max_total_per_task,
-            total_cap=total_cap,
-        )
+        # Safe variable substitution
+        variables = {
+            "target_score": str(target_score),
+            "diagnosis_json": json.dumps(diagnosis, indent=2),
+            "dataset_stats_json": json.dumps(dataset_stats, indent=2),
+            "scores_json": json.dumps(state.scores, indent=2),
+            "max_new_per_task": str(max_new_per_task),
+            "max_total_per_task": str(max_total_per_task),
+            "total_cap": str(total_cap),
+        }
+        prompt = template
+        for key, value in variables.items():
+            prompt = prompt.replace("{" + key + "}", value)
 
         # Call Claude
         log_print("  [plan_strategy] Calling Claude for strategy plan...")
