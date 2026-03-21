@@ -44,6 +44,95 @@ def save_state(state: AgentState, state_file: Path) -> None:
     state_file.write_text(json.dumps(state.to_dict(), indent=2))
 
 
+def _format_result(tool_name: str, r: dict) -> str:
+    """Format tool results in a human-readable way."""
+    if not isinstance(r, dict):
+        return str(r)[:200]
+
+    if tool_name == "inspect_data":
+        total = r.get("total", "?")
+        overweight = r.get("overweight", [])
+        underweight = r.get("underweight", [])
+        parts = [f"{total} examples"]
+        if overweight:
+            parts.append(f"overweight: {overweight}")
+        if underweight:
+            parts.append(f"underweight: {underweight}")
+        return " | ".join(parts)
+
+    elif tool_name == "benchmark":
+        avg = r.get("avg_score", "?")
+        scores = r.get("scores", {})
+        zeros = [t for t, s in scores.items() if s == 0.0]
+        return f"avg={avg} | {len(scores)} tasks scored | {len(zeros)} at zero: {zeros}"
+
+    elif tool_name == "generate_data":
+        total = r.get("generated", 0)
+        per = r.get("per_task", {})
+        return f"{total} examples generated across {len(per)} tasks"
+
+    elif tool_name == "generate_adversarial":
+        total = r.get("generated", 0)
+        per = r.get("per_task", {})
+        return f"{total} adversarial examples across {len(per)} tasks"
+
+    elif tool_name == "train":
+        name = r.get("model_name", "?")
+        loss = r.get("loss_final", "?")
+        dur = r.get("duration_minutes", "?")
+        return f"{name} | final loss: {loss} | {dur} min"
+
+    elif tool_name == "convert":
+        path = r.get("gguf_path", "?")
+        size = r.get("size_mb", "?")
+        return f"GGUF: {size} MB"
+
+    elif tool_name == "score_data":
+        return f"scored {r.get('total_scored', '?')} examples ({r.get('new_scored', 0)} new)"
+
+    elif tool_name == "filter_data":
+        return f"kept {r.get('kept', '?')}, removed {r.get('removed', '?')}"
+
+    elif tool_name == "dedup_data":
+        return f"before={r.get('before', '?')}, after={r.get('after', '?')}, removed {r.get('removed', '?')} ({r.get('percent', '?')}%)"
+
+    elif tool_name == "rebalance_data":
+        return f"before={r.get('before', '?')}, after={r.get('after', '?')}, trimmed {r.get('trimmed', '?')}"
+
+    elif tool_name == "validate_data":
+        clean = r.get("clean", "?")
+        total = r.get("total_examples", "?")
+        critical = r.get("critical_high", 0)
+        ready = r.get("ready_for_training", False)
+        return f"{clean}/{total} clean | {critical} critical | ready={ready}"
+
+    elif tool_name == "diagnose":
+        summary = r.get("summary", "")[:150]
+        n_causes = len(r.get("root_causes", []))
+        n_fixes = len(r.get("data_fixes", []))
+        return f"{n_causes} root causes, {n_fixes} data fixes | {summary}"
+
+    elif tool_name == "plan_strategy":
+        plan = r.get("plan", [])
+        total = r.get("total_examples", 0)
+        return f"{len(plan)} tasks planned, {total} examples total"
+
+    elif tool_name == "check_disk":
+        wfree = r.get("workspace_free_gb", "?")
+        rfree = r.get("root_free_gb", "?")
+        warn = " WARNING: LOW SPACE" if r.get("warning") else ""
+        return f"workspace: {wfree} GB free, root: {rfree} GB free{warn}"
+
+    elif tool_name == "snapshot":
+        return f"saved to {r.get('path', '?')}"
+
+    elif tool_name == "push_hf":
+        return f"pushed {r.get('files_pushed', '?')} files to {r.get('repo', '?')}"
+
+    # Fallback
+    return ", ".join(f"{k}={v}" for k, v in list(r.items())[:5])[:200]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CONTEXT BUILDING
 # ─────────────────────────────────────────────────────────────────────────────
@@ -260,17 +349,13 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
         if status == "error":
             consecutive_failures += 1
             error_msg = result.get("error", "unknown error")
-            log_print(f"[ORCHESTRATOR AGENT] FAILED: {error_msg[:200]}")
-            result_summary = f"ERROR: {error_msg[:100]}"
+            log_print(f"[ORCHESTRATOR AGENT] FAILED: {error_msg[:300]}")
+            result_summary = f"ERROR: {error_msg[:200]}"
         else:
             consecutive_failures = 0
-            # Build a concise result summary for the action history
             r = result.get("result", {})
-            if isinstance(r, dict):
-                result_summary = ", ".join(f"{k}={v}" for k, v in list(r.items())[:5])
-            else:
-                result_summary = str(r)[:200]
-            log_print(f"[ORCHESTRATOR AGENT] Result: {result_summary[:200]}")
+            result_summary = _format_result(tool_name, r)
+            log_print(f"[ORCHESTRATOR AGENT] Result: {result_summary}")
 
         if cost > 0:
             log_print(f"[ORCHESTRATOR AGENT] Cost: ${cost:.2f}")
