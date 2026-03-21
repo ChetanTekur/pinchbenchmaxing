@@ -34,7 +34,7 @@ def auto_batch_size(config_batch: int, model_vram_gb: float = 15.0) -> tuple[int
     try:
         import torch
         if torch.cuda.is_available():
-            total_vram = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+            total_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             free_vram = total_vram - model_vram_gb
 
             # Conservative: 4 GB per batch item avoids gradient offloading

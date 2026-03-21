@@ -244,7 +244,7 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
         import torch
         if torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name(0)
-            vram_gb = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+            vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             cuda_ver = torch.version.cuda
             # Test kernel compatibility
             try:

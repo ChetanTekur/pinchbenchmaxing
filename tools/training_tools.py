@@ -70,7 +70,7 @@ def _check_cuda_compatibility() -> dict:
                          f"https://download.pytorch.org/whl/cu{cuda_version.replace('.', '')[:3]}"
             }
 
-        vram_gb = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         log_print(f"  [preflight] GPU: {gpu_name} ({vram_gb:.0f} GB)")
         log_print(f"  [preflight] CUDA: {cuda_version}, PyTorch: {torch_version}")
 
