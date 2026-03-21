@@ -340,6 +340,132 @@ def cmd_validate(clean: bool = False):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# DIVERSITY ANALYSIS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def analyze_task_diversity(examples: list[dict]) -> dict:
+    """Analyze diversity within a single task's examples."""
+    if not examples:
+        return {"count": 0, "score": 0.0, "issues": ["no examples"]}
+
+    user_messages = []
+    turn_counts = []
+    tool_sets = []
+    char_lengths = []
+
+    for ex in examples:
+        msgs = ex.get("messages", [])
+        # User message diversity
+        user_msgs = [m["content"] for m in msgs if m["role"] == "user"]
+        if user_msgs:
+            user_messages.append(user_msgs[0])
+
+        # Turn count diversity
+        turn_counts.append(len(msgs))
+
+        # Tool usage diversity
+        tools_used = set()
+        for m in msgs:
+            if m["role"] == "assistant":
+                tools_used.update(extract_tool_names(m["content"]))
+        tool_sets.append(tools_used)
+
+        # Length diversity
+        char_lengths.append(sum(len(m["content"]) for m in msgs))
+
+    issues = []
+    scores = []
+
+    # 1. User message uniqueness (are prompts diverse?)
+    unique_ratio = len(set(user_messages)) / len(user_messages) if user_messages else 0
+    scores.append(unique_ratio)
+    if unique_ratio < 0.8:
+        issues.append(f"low prompt diversity ({unique_ratio:.0%} unique)")
+
+    # 2. Turn count spread (mix of simple and complex conversations)
+    if turn_counts:
+        min_t, max_t = min(turn_counts), max(turn_counts)
+        spread = (max_t - min_t) / max_t if max_t > 0 else 0
+        scores.append(min(spread * 2, 1.0))  # normalize: 50%+ spread = 1.0
+        if spread < 0.2:
+            issues.append(f"low turn diversity (all {min_t}-{max_t} turns)")
+
+    # 3. Tool combination diversity
+    unique_tool_combos = len(set(frozenset(ts) for ts in tool_sets))
+    combo_ratio = unique_tool_combos / len(tool_sets) if tool_sets else 0
+    scores.append(min(combo_ratio * 2, 1.0))  # normalize
+    if combo_ratio < 0.3:
+        issues.append(f"low tool diversity ({unique_tool_combos} unique combos)")
+
+    # 4. Length distribution (check for clustering)
+    if char_lengths and len(char_lengths) > 2:
+        import statistics
+        mean_len = statistics.mean(char_lengths)
+        stdev = statistics.stdev(char_lengths) if len(char_lengths) > 1 else 0
+        cv = stdev / mean_len if mean_len > 0 else 0  # coefficient of variation
+        scores.append(min(cv * 2, 1.0))  # normalize: 50%+ CV = 1.0
+        if cv < 0.15:
+            issues.append(f"uniform length (cv={cv:.2f}, all ~{mean_len:.0f} chars)")
+
+    diversity_score = sum(scores) / len(scores) if scores else 0.0
+
+    return {
+        "count": len(examples),
+        "score": round(diversity_score, 2),
+        "unique_prompts": len(set(user_messages)),
+        "turn_range": f"{min(turn_counts)}-{max(turn_counts)}" if turn_counts else "n/a",
+        "unique_tool_combos": unique_tool_combos,
+        "issues": issues,
+    }
+
+
+def cmd_diversity():
+    """Show per-task diversity analysis."""
+    records = load_records()
+    by_task = defaultdict(list)
+    for r in records:
+        by_task[r.get("task_id", "unknown")].append(r)
+
+    print(f"\n{'═'*70}")
+    print(f"  DATASET DIVERSITY ANALYSIS")
+    print(f"{'═'*70}")
+
+    all_results = {}
+    flagged = []
+
+    print(f"\n  {'Task':<35} {'Count':>5} {'Div':>5} {'Prompts':>8} {'Turns':>8} {'Tools':>7}")
+    print(f"  {'─'*35} {'─'*5} {'─'*5} {'─'*8} {'─'*8} {'─'*7}")
+
+    for task_id in TASK_IDS:
+        examples = by_task.get(task_id, [])
+        result = analyze_task_diversity(examples)
+        all_results[task_id] = result
+
+        if not examples:
+            print(f"  {task_id:<35} {'0':>5} {'—':>5} {'—':>8} {'—':>8} {'—':>7}  ⚠ MISSING")
+            flagged.append((task_id, result))
+            continue
+
+        marker = ""
+        if result["score"] < 0.5:
+            marker = "  ⚠ LOW DIVERSITY"
+            flagged.append((task_id, result))
+
+        print(f"  {task_id:<35} {result['count']:>5} {result['score']:>5.2f} "
+              f"{result['unique_prompts']:>8} {result['turn_range']:>8} "
+              f"{result['unique_tool_combos']:>7}{marker}")
+
+    if flagged:
+        print(f"\n  ⚠ {len(flagged)} tasks need attention:")
+        for task_id, result in flagged:
+            if result["issues"]:
+                print(f"    {task_id}: {', '.join(result['issues'])}")
+
+    print()
+    return all_results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
@@ -358,6 +484,8 @@ if __name__ == "__main__":
     p_val.add_argument("--clean", action="store_true",
                        help="Remove flagged examples and rewrite train/val files")
 
+    sub.add_parser("diversity", help="Analyze per-task diversity")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -371,3 +499,5 @@ if __name__ == "__main__":
         cmd_task(args.task_id)
     elif args.command == "validate":
         cmd_validate(clean=args.clean)
+    elif args.command == "diversity":
+        cmd_diversity()

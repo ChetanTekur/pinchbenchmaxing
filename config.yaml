@@ -15,7 +15,8 @@ benchmark:
   total_tasks: 23
 
 data:
-  examples_per_task: 40       # target examples per task — quality > quantity
+  examples_per_task: 50       # target examples per task
+  min_per_task: 40            # floor: every task must have at least this many
   val_split: 0.1              # fraction held out for validation
   min_judge_score: 3          # filter examples below this quality score (1-5)
 
@@ -47,9 +48,9 @@ loop:
   max_iterations: 2           # increase after verifying the loop works correctly
   target_score: 0.85          # stop when benchmark score exceeds this
   weak_task_threshold: 0.50   # tasks below this get more synthetic data each iteration
-  max_new_per_task: 25        # max NEW examples per task per iteration
-  max_total_per_task: 50      # hard cap: rebalance trims any task above this before training
-  total_new_examples_cap: 200 # max total new examples per iteration
+  max_new_per_task: 30        # max NEW examples per task per iteration
+  max_total_per_task: 100     # hard cap: rebalance trims any task above this before training
+  total_new_examples_cap: 300 # max total new examples per iteration
 
 orchestrator:
   model: claude-sonnet-4-6      # model for orchestrator decisions (~$0.03/turn)

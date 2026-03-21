@@ -6,7 +6,7 @@ execution to the appropriate implementation module.
 """
 
 from .data_tools import (
-    inspect_data, generate_data, generate_adversarial,
+    inspect_data, check_diversity, generate_data, generate_adversarial,
     score_data, filter_data, repair_data,
     dedup_data, rebalance_data, snapshot, push_hf,
     validate_data,
@@ -21,6 +21,20 @@ from .eval_tools import get_state, request_approval, write_note
 # ── Tool Schemas (Anthropic tool_use format) ─────────────────────────────────
 
 TOOL_SCHEMAS = [
+    {
+        "name": "check_diversity",
+        "description": (
+            "Analyze per-task diversity: prompt uniqueness, turn count spread, "
+            "tool combination variety, and length distribution. "
+            "Returns tasks with low diversity that need more varied examples. "
+            "Call AFTER inspect_data and BEFORE training to ensure data quality."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
     {
         "name": "inspect_data",
         "description": (
@@ -410,6 +424,7 @@ TOOL_SCHEMAS = [
 
 _DISPATCH = {
     "inspect_data":         inspect_data,
+    "check_diversity":      check_diversity,
     "diagnose":             diagnose,
     "plan_strategy":        plan_strategy,
     "generate_data":        generate_data,

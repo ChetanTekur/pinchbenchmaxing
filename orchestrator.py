@@ -49,6 +49,19 @@ def _format_result(tool_name: str, r: dict) -> str:
     if not isinstance(r, dict):
         return str(r)[:200]
 
+    if tool_name == "check_diversity":
+        low = r.get("low_diversity_tasks", [])
+        missing = r.get("missing_tasks", [])
+        n = r.get("needs_attention", 0)
+        if n == 0:
+            return "all tasks have good diversity"
+        parts = []
+        if missing:
+            parts.append(f"{len(missing)} missing")
+        if low:
+            parts.append(f"{len(low)} low diversity: {low}")
+        return f"{n} tasks need attention | " + " | ".join(parts)
+
     if tool_name == "inspect_data":
         total = r.get("total", "?")
         missing = r.get("missing_tasks", [])

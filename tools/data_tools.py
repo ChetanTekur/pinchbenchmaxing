@@ -45,6 +45,45 @@ def _run_script(cmd: list[str], label: str, env: dict | None = None) -> tuple[in
 
 # ── inspect_data ─────────────────────────────────────────────────────────────
 
+def check_diversity(args: dict, cfg, state) -> dict:
+    """Analyze per-task diversity: prompt uniqueness, turn spread, tool combos."""
+    try:
+        rc, output = _run_script(
+            [sys.executable, "-m", "datagen.inspect_data", "diversity"],
+            "check_diversity",
+        )
+        if rc != 0:
+            return {"status": "error", "error": f"diversity check exited with code {rc}"}
+
+        # Parse the diversity results from the output
+        import re
+        from agents.base import TASK_IDS
+        low_diversity = []
+        missing = []
+
+        for line in output.splitlines():
+            if "LOW DIVERSITY" in line:
+                m = re.match(r'\s+(task_\w+)', line)
+                if m:
+                    low_diversity.append(m.group(1))
+            if "MISSING" in line:
+                m = re.match(r'\s+(task_\w+)', line)
+                if m:
+                    missing.append(m.group(1))
+
+        return {
+            "status": "success",
+            "result": {
+                "low_diversity_tasks": low_diversity,
+                "missing_tasks": missing,
+                "needs_attention": len(low_diversity) + len(missing),
+            },
+            "cost_usd": 0.0,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 def inspect_data(args: dict, cfg, state) -> dict:
     """Inspect the training dataset and return statistics."""
     try:

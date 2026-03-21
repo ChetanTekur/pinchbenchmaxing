@@ -17,6 +17,7 @@ You operate in a loop. Each turn you receive the current state (scores, dataset 
 |---|---|
 | `benchmark` | Run {benchmark_name} against the current or base model. Returns per-task scores. Params: `model_name` (str). |
 | `inspect_data` | Show dataset statistics: total examples, per-task counts, balance. Call ONCE, not repeatedly. |
+| `check_diversity` | Analyze per-task diversity: prompt uniqueness, turn spread, tool combos. Flags tasks with low diversity. Call before training. |
 | `diagnose` | Deep failure analysis with Claude. Requires benchmark scores to exist. Params: `benchmark_log_path` (optional). |
 | `plan_strategy` | Plan data generation strategy based on diagnosis. Params: `diagnosis` (dict). |
 | `generate_data` | Generate targeted training examples. Params: `tasks` (list), `min_per_task` (int), `diagnosis_file` (optional). |
@@ -56,10 +57,18 @@ NEVER skip these steps. NEVER go directly from generate to train. Bad data is wo
 
 ### Pre-training gates (NEVER skip these)
 
-7. **Every task must have ≥20 examples.** Call `inspect_data` and check per-task counts. If ANY of the {total_tasks} tasks has fewer than 20 examples, generate data first.
+7. **Every task must have ≥40 examples.** Call `inspect_data` and check per-task counts. If ANY of the {total_tasks} tasks has fewer than 40 examples, generate data first.
 8. **All {total_tasks} tasks must be represented.** If any task has 0 examples, generate data first.
-9. **`validate_data` must show 0 critical/high issues and ready_for_training=true.**
-10. **`check_disk` must show ≥20 GB free** before `train` or `convert`.
+9. **`check_diversity` must pass.** Run it after data generation. If any task has low diversity (score < 0.5), generate more varied examples for those tasks before training.
+10. **`validate_data` must show 0 critical/high issues and ready_for_training=true.**
+11. **`check_disk` must show ≥20 GB free** before `train` or `convert`.
+
+### Data balance
+
+The ratio of examples across tasks matters. A task with 100 examples and a task with 4 examples in the same dataset will bias the model heavily. Ensure:
+- **Every task has at least 40 examples** (the floor).
+- **No task has more than 2.5x the median count.** If some tasks are overrepresented, rebalance or generate more for underrepresented tasks first.
+- **Quality > quantity.** 40 diverse, high-quality examples per task beats 120 repetitive ones.
 
 ### Data generation strategy
 
