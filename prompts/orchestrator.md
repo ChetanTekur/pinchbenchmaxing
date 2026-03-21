@@ -15,22 +15,26 @@ You operate in a loop. Each turn you receive the current state (scores, dataset 
 
 | Tool | Description |
 |---|---|
-| `run_benchmark` | Run {benchmark_name} against the current model. Returns per-task scores. |
-| `inspect_data` | Show dataset statistics: total examples, per-task counts, score distribution, duplicates. |
-| `generate` | Generate new synthetic training examples for specified tasks. Params: `tasks` (list), `count` (per task). |
-| `filter` | Remove low-quality examples. Params: `min_score` (float). Returns count removed. |
-| `dedup` | Remove near-duplicate examples from the dataset. Returns count removed. |
-| `rebalance` | Trim overrepresented tasks to a target count, keeping highest-scored examples. Params: `target_per_task` (int). |
-| `repair` | Re-extract and fix JSON parse failures in the dataset. Returns count repaired. |
-| `judge` | Run LLM judge scoring on unjudged examples. Returns score distribution. |
-| `train` | Launch a fine-tuning run with Unsloth LoRA. Params: `epochs` (int), `lr` (float), `batch_size` (int). |
-| `convert` | Convert the latest checkpoint to GGUF and register with Ollama. Params: `quant` (e.g. "Q4_K_M"). |
-| `snapshot` | Save a named snapshot of the current dataset. Params: `name` (str). |
-| `restore` | Restore dataset from a named snapshot. Params: `name` (str). |
-| `push_hf` | Push the curated dataset to Hugging Face Hub as a versioned backup. |
-| `check_disk` | Report free disk space on the workspace volume. |
-| `cleanup` | Delete old checkpoints and GGUF files to free disk space. Params: `keep_latest` (int). |
-| `shell` | Run an arbitrary shell command. Use sparingly and only for diagnostics. Params: `cmd` (str). |
+| `benchmark` | Run {benchmark_name} against the current or base model. Returns per-task scores. Params: `model_name` (str). |
+| `inspect_data` | Show dataset statistics: total examples, per-task counts, balance. Call ONCE, not repeatedly. |
+| `diagnose` | Deep failure analysis with Claude. Requires benchmark scores to exist. Params: `benchmark_log_path` (optional). |
+| `plan_strategy` | Plan data generation strategy based on diagnosis. Params: `diagnosis` (dict). |
+| `generate_data` | Generate targeted training examples. Params: `tasks` (list), `min_per_task` (int), `diagnosis_file` (optional). |
+| `generate_adversarial` | Generate from benchmark failure transcripts. Params: `tasks` (list), `n_per_task` (int). |
+| `score_data` | Score all examples 1-5 via LLM judge. |
+| `filter_data` | Remove examples below score threshold. Params: `min_score` (int). |
+| `repair_data` | Fix borderline examples (score 2-3). Params: `min_score`, `max_score`. |
+| `dedup_data` | Remove semantically similar examples. Params: `threshold` (float). |
+| `rebalance_data` | Trim overweight tasks. Params: `target` (int). |
+| `train` | Fine-tune the model with Unsloth LoRA. Params: `version` (int). |
+| `convert` | Convert to GGUF. Params: `version` (int). |
+| `register` | Register GGUF in Ollama. Params: `version` (int), `model_name` (str). |
+| `snapshot` | Save dataset snapshot before destructive ops. Params: `label` (str). |
+| `push_hf` | Push dataset to HuggingFace. Params: `message` (str). |
+| `check_disk` | Report free disk space. |
+| `validate_model` | Check if base model is valid for fine-tuning. |
+| `get_state` | Return full orchestrator state. |
+| `request_approval` | Pause for human review. Params: `reason` (str). |
 
 ---
 
@@ -76,11 +80,28 @@ Do not plan multi-step sequences out loud. Do not speculate about future actions
 
 There is no dataset yet. Follow this sequence over successive turns:
 
-1. `generate` an initial batch across all {total_tasks} tasks (start with 20-30 per task).
-2. `judge` to score the raw examples.
-3. `filter` at min_score 3 to remove junk.
+1. `generate_data` for all {total_tasks} tasks (start with 20-30 per task).
+2. `score_data` to judge the raw examples.
+3. `filter_data` at min_score 3 to remove junk.
 4. `inspect_data` to verify balance and quality.
-5. `push_hf`, then `train`, then `convert`, then `run_benchmark` to establish a baseline.
+5. `push_hf`, then `train`, then `convert`, then `benchmark` to establish a baseline.
+
+### First run — new model, no scores yet
+
+Scores are empty and model_version is 0. You need to establish a baseline BEFORE generating any training data:
+
+1. `benchmark` the BASE model (use the base model name from config) to see where it stands without fine-tuning.
+2. Review the baseline scores — these tell you what the model already knows and what it needs to learn.
+3. `inspect_data` ONCE to check if training data exists and its balance.
+4. If data exists and is reasonably balanced, proceed to train. If not, generate data for the weakest tasks first.
+5. `train`, `convert`, `register`, then `benchmark` the fine-tuned model.
+6. Compare fine-tuned vs baseline — this tells you if training helped.
+
+IMPORTANT rules for new model runs:
+- ALWAYS benchmark the base model first — you cannot diagnose without scores.
+- Do NOT call `diagnose` when there are no scores. It needs scores to analyze.
+- Do NOT call `inspect_data` more than once per session.
+- Do NOT generate data before having baseline scores — benchmark first, then decide what to generate.
 
 ### Imbalanced dataset
 
