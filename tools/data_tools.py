@@ -425,6 +425,31 @@ def snapshot(args: dict, cfg, state) -> dict:
         return {"status": "error", "error": str(e)}
 
 
+# ── validate_data ─────────────────────────────────────────────────────────────
+
+def validate_data(args: dict, cfg, state) -> dict:
+    """Run comprehensive data quality validation."""
+    try:
+        from datagen.validate_data import run_validation
+        fix = args.get("fix", False)
+        report = run_validation(fix=fix)
+        return {
+            "status": "success",
+            "result": {
+                "total_examples": report["total_examples"],
+                "clean": report["clean"],
+                "with_issues": report["with_issues"],
+                "critical_high": report["critical_high"],
+                "by_check": report.get("by_check", {}),
+                "worst_tasks": report.get("worst_tasks", {}),
+                "ready_for_training": report["critical_high"] == 0,
+            },
+            "cost_usd": 0,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e), "cost_usd": 0}
+
+
 # ── push_hf ──────────────────────────────────────────────────────────────────
 
 def push_hf(args: dict, cfg, state) -> dict:

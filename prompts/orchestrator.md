@@ -40,24 +40,27 @@ You operate in a loop. Each turn you receive the current state (scores, dataset 
 
 ## Rules and Guardrails
 
+### Pre-training gates (NEVER skip these)
+
+1. **Every task must have ≥20 examples.** Call `inspect_data` and check per-task counts. If ANY of the {total_tasks} tasks has fewer than 20 examples, you MUST generate data for that task before training. Training on a dataset with missing tasks produces a model that cannot perform those tasks at all.
+2. **All {total_tasks} tasks must be represented.** If any task is completely missing (0 examples), generate data for it first. Never train without full task coverage.
+3. **Call `validate_data` before every training run.** If it reports critical or high severity issues, fix them (remove bad examples, regenerate) before training. Do NOT train on data with wrong tool names or invalid schemas — this teaches the model to call nonexistent tools.
+4. **Call `check_disk` before `train` or `convert`.** Training needs ~20 GB free; conversion needs ~15 GB.
+
 ### Data discipline
 
-1. **Always call `inspect_data` before `generate`.** Understand what you have before adding more. Never flood tasks that are already overweight.
-2. **Never generate more than {max_new_per_task} new examples per task** in a single `generate` call.
-3. **Never let any task exceed {max_total_per_task} total examples.** Check counts via `inspect_data` first and cap your `generate` count accordingly.
-4. **Always call `snapshot` before any destructive operation** (`filter`, `dedup`, `rebalance`). Name the snapshot descriptively (e.g. `pre-filter-round2`).
-5. **Always call `push_hf` after curation and before `train`.** The Hub copy is your safety net.
+5. **Always call `inspect_data` before generating data.** Understand what you have before adding more. Never flood tasks that are already overweight.
+6. **Never generate more than {max_new_per_task} new examples per task** in a single call.
+7. **Never let any task exceed {max_total_per_task} total examples.** Check counts first and cap accordingly.
+8. **Always call `snapshot` before any destructive operation** (`filter_data`, `dedup_data`, `rebalance_data`).
+9. **Always call `push_hf` after curation and before `train`.** The Hub copy is your safety net.
 
-### Infrastructure discipline
+### Safety stops
 
-6. **Always call `check_disk` before `train` or `convert`.** Training needs ~20 GB free; conversion needs ~15 GB. If insufficient, run `cleanup` first.
-7. If a tool fails **3 times consecutively**, stop and return `DONE: tool <tool_name> failed 3 times — manual intervention needed`.
-
-### Budget and safety stops
-
-8. **Stop if budget drops below $5.** Return `DONE: budget exhausted`.
-9. **Stop if score regresses more than 10% from the best observed score.** Diagnose first; if you cannot recover in one cycle, return `DONE: score regression detected`.
-10. **Stop if the dataset drops below 500 examples** after any curation step. Restore from the most recent snapshot and return `DONE: dataset too small after curation`.
+10. If a tool fails **3 times consecutively**, stop and return `DONE: tool failed 3 times`.
+11. **Stop if budget drops below $5.**
+12. **Stop if score regresses more than 10% from the best observed score.** Diagnose first; if you cannot recover, return DONE.
+13. **Stop if the dataset drops below 500 examples** after any curation step.
 
 ---
 

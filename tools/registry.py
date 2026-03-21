@@ -9,6 +9,7 @@ from .data_tools import (
     inspect_data, generate_data, generate_adversarial,
     score_data, filter_data, repair_data,
     dedup_data, rebalance_data, snapshot, push_hf,
+    validate_data,
 )
 from .training_tools import (
     train, convert, register, validate_model, benchmark, check_disk,
@@ -240,10 +241,30 @@ TOOL_SCHEMAS = [
         },
     },
     {
+        "name": "validate_data",
+        "description": (
+            "Run comprehensive data quality validation: check tool call schemas, "
+            "argument names, required tools per task, repetition patterns, truncation. "
+            "Returns counts of clean/issues/critical. MUST be called before train — "
+            "never train on data with critical or high severity issues."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "fix": {
+                    "type": "boolean",
+                    "description": "If true, remove examples with critical/high issues.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "train",
         "description": (
             "Fine-tune the model: prepare SFT data, run Unsloth LoRA training. "
-            "Uses the current train.jsonl/val.jsonl."
+            "Uses the current train.jsonl/val.jsonl. "
+            "PRE-REQUISITES: validate_data must pass, all tasks must have ≥20 examples, check_disk must show enough space."
         ),
         "input_schema": {
             "type": "object",
@@ -367,6 +388,7 @@ _DISPATCH = {
     "repair_data":          repair_data,
     "dedup_data":           dedup_data,
     "rebalance_data":       rebalance_data,
+    "validate_data":        validate_data,
     "snapshot":             snapshot,
     "benchmark":            benchmark,
     "train":                train,
