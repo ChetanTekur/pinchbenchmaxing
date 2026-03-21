@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 
 import anthropic
@@ -26,44 +27,73 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 
 def _extract_json_object(text: str) -> dict | None:
     """Robustly extract the outermost JSON object from a Claude response."""
+    # Strip markdown fences
     text = re.sub(r'^```(?:json)?\s*', '', text.strip(), flags=re.MULTILINE)
     text = re.sub(r'\s*```$', '', text.strip(), flags=re.MULTILINE)
     text = text.strip()
 
+    # Try direct parse first
     try:
         result = json.loads(text)
         if isinstance(result, dict):
             return result
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        log_print(f"  [json] Direct parse failed: {e}")
 
-    start = text.find('{')
-    if start == -1:
-        return None
-    depth = 0
-    in_str = False
-    escape = False
-    for i, ch in enumerate(text[start:], start):
-        if escape:
-            escape = False
-            continue
-        if ch == '\\' and in_str:
-            escape = True
-            continue
-        if ch == '"':
-            in_str = not in_str
-            continue
-        if in_str:
-            continue
-        if ch == '{':
-            depth += 1
-        elif ch == '}':
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(text[start:i + 1])
-                except json.JSONDecodeError:
-                    return None
+    # Try brace-depth tracking — find ALL possible {} matches, not just first
+    start = 0
+    while True:
+        idx = text.find('{', start)
+        if idx == -1:
+            break
+        depth = 0
+        in_str = False
+        escape = False
+        for i, ch in enumerate(text[idx:], idx):
+            if escape:
+                escape = False
+                continue
+            if ch == '\\' and in_str:
+                escape = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    candidate = text[idx:i + 1]
+                    try:
+                        result = json.loads(candidate)
+                        if isinstance(result, dict):
+                            return result
+                    except json.JSONDecodeError:
+                        pass
+                    break
+        start = idx + 1
+
+    # Last resort: try to fix common issues (trailing comma, truncation)
+    idx = text.find('{')
+    if idx != -1:
+        # Find the last } and try everything between
+        ridx = text.rfind('}')
+        if ridx > idx:
+            candidate = text[idx:ridx + 1]
+            # Remove trailing commas before } or ]
+            candidate = re.sub(r',\s*}', '}', candidate)
+            candidate = re.sub(r',\s*]', ']', candidate)
+            try:
+                result = json.loads(candidate)
+                if isinstance(result, dict):
+                    return result
+            except json.JSONDecodeError:
+                pass
+
+    return None
     return None
 
 
@@ -210,6 +240,12 @@ def diagnose(args: dict, cfg, state) -> dict:
 
         if diagnosis is None:
             log_print(f"  [diagnose] WARNING: Could not parse JSON ({len(raw)} chars)")
+            # Save raw for debugging
+            debug_dir = cfg.data_dir / "debug"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            debug_file = debug_dir / f"diagnose_raw_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            debug_file.write_text(raw)
+            log_print(f"  [diagnose] Raw saved to {debug_file}")
             diagnosis = {
                 "summary": raw[:500],
                 "root_causes": [],
