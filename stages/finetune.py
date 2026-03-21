@@ -141,7 +141,7 @@ def main():
         output_dir                  =str(cfg.adapter_dir),
         num_train_epochs            =int(t["epochs"]),
         per_device_train_batch_size =batch_size,
-        per_device_eval_batch_size  =batch_size,
+        per_device_eval_batch_size  =1,  # eval skips grad checkpointing → more VRAM
         gradient_accumulation_steps =grad_accum,
         learning_rate               =float(t["learning_rate"]),
         lr_scheduler_type           =str(t["lr_scheduler"]),
