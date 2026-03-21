@@ -140,7 +140,7 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        log_print("[orchestrator] ERROR: ANTHROPIC_API_KEY not set")
+        log_print("[ORCHESTRATOR AGENT] ERROR: ANTHROPIC_API_KEY not set")
         sys.exit(1)
 
     client = anthropic.Anthropic(api_key=api_key)
@@ -152,11 +152,13 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
     consecutive_failures = 0
 
     log_print(f"\n{'='*62}")
-    log_print(f"  ORCHESTRATOR SESSION")
-    log_print(f"  Model: {model}")
-    log_print(f"  Budget: ${budget_total}")
-    log_print(f"  Max actions: {max_actions}")
-    log_print(f"  Dry run: {dry_run}")
+    log_print(f"  ORCHESTRATOR AGENT")
+    log_print(f"  Claude model : {model}")
+    log_print(f"  Budget       : ${budget_total}")
+    log_print(f"  Max actions  : {max_actions}")
+    log_print(f"  Dry run      : {dry_run}")
+    log_print(f"  Target       : {cfg.loop.target_score:.0%}")
+    log_print(f"  Current score: {state.avg_score:.1%}")
     log_print(f"{'='*62}")
 
     for turn in range(1, max_actions + 1):
@@ -164,11 +166,11 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
 
         # ── Guardrails ─────────────────────────────────────────────────────
         if budget_remaining < 5.0:
-            log_print(f"\n[orchestrator] Budget exhausted (${budget_remaining:.2f} remaining). Stopping.")
+            log_print(f"\n[ORCHESTRATOR AGENT] Budget exhausted (${budget_remaining:.2f} remaining). Stopping.")
             break
 
         if consecutive_failures >= cfg.orchestrator.auto_pause.max_consecutive_failures:
-            log_print(f"\n[orchestrator] {consecutive_failures} consecutive failures. Stopping.")
+            log_print(f"\n[ORCHESTRATOR AGENT] {consecutive_failures} consecutive failures. Stopping.")
             break
 
         # ── Call Claude ────────────────────────────────────────────────────
@@ -187,7 +189,7 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
                 tools=TOOL_SCHEMAS,
             )
         except Exception as e:
-            log_print(f"[orchestrator] Claude API error: {e}")
+            log_print(f"[ORCHESTRATOR AGENT] Claude API error: {e}")
             consecutive_failures += 1
             continue
 
@@ -207,7 +209,7 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
 
         # Check for DONE signal
         if text_block and "DONE" in (text_block.text or ""):
-            log_print(f"\n[orchestrator] {text_block.text}")
+            log_print(f"\n[ORCHESTRATOR AGENT] {text_block.text}")
             state.action_history.append({
                 "turn": turn,
                 "action": "DONE",
@@ -221,17 +223,24 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
         if not tool_use_block:
             # Claude responded with text but no DONE and no tool call
             if text_block:
-                log_print(f"[orchestrator] Claude says: {text_block.text[:200]}")
+                log_print(f"[ORCHESTRATOR AGENT] Claude says: {text_block.text[:200]}")
             continue
 
         # ── Execute tool ───────────────────────────────────────────────────
         tool_name = tool_use_block.name
         tool_args = tool_use_block.input or {}
 
-        log_print(f"[orchestrator] Action: {tool_name}({json.dumps(tool_args, default=str)[:150]})")
+        # Show Claude's reasoning if it explained before calling the tool
+        if text_block and text_block.text and text_block.text.strip():
+            log_print(f"[ORCHESTRATOR AGENT] Thinking: {text_block.text.strip()[:200]}")
+
+        args_str = json.dumps(tool_args, default=str)
+        if len(args_str) > 100:
+            args_str = args_str[:100] + "..."
+        log_print(f"[ORCHESTRATOR AGENT] Action: {tool_name}({args_str})")
 
         if dry_run:
-            log_print(f"[orchestrator] DRY RUN — skipping execution")
+            log_print(f"[ORCHESTRATOR AGENT] DRY RUN — skipping execution")
             result = {"status": "dry_run", "result": {}, "cost_usd": 0}
         else:
             try:
@@ -247,7 +256,7 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
         if status == "error":
             consecutive_failures += 1
             error_msg = result.get("error", "unknown error")
-            log_print(f"[orchestrator] FAILED: {error_msg[:200]}")
+            log_print(f"[ORCHESTRATOR AGENT] FAILED: {error_msg[:200]}")
             result_summary = f"ERROR: {error_msg[:100]}"
         else:
             consecutive_failures = 0
@@ -257,10 +266,10 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
                 result_summary = ", ".join(f"{k}={v}" for k, v in list(r.items())[:5])
             else:
                 result_summary = str(r)[:200]
-            log_print(f"[orchestrator] Result: {result_summary[:200]}")
+            log_print(f"[ORCHESTRATOR AGENT] Result: {result_summary[:200]}")
 
         if cost > 0:
-            log_print(f"[orchestrator] Cost: ${cost:.2f}")
+            log_print(f"[ORCHESTRATOR AGENT] Cost: ${cost:.2f}")
 
         # ── Update state ───────────────────────────────────────────────────
         state.action_history.append({
@@ -280,10 +289,10 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
 
     # ── Session summary ────────────────────────────────────────────────────
     log_print(f"\n{'='*62}")
-    log_print(f"  SESSION COMPLETE")
-    log_print(f"  Turns: {len(state.action_history)}")
-    log_print(f"  Budget spent: ${state.budget_spent_usd:.2f}")
-    log_print(f"  Score: {state.avg_score:.3f} ({state.avg_score*100:.1f}%)")
+    log_print(f"  ORCHESTRATOR AGENT — SESSION COMPLETE")
+    log_print(f"  Turns used   : {len(state.action_history)}/{max_actions}")
+    log_print(f"  Budget spent : ${state.budget_spent_usd:.2f} / ${budget_total}")
+    log_print(f"  Score        : {state.avg_score:.1%}")
     log_print(f"{'='*62}")
 
 
@@ -325,19 +334,19 @@ def main():
             m = re.search(r'-v(\d+)$', args.model)
             if m:
                 state.model_version = int(m.group(1))
-            log_print(f"[orchestrator] Model: {args.model} (v{state.model_version})")
+            log_print(f"[ORCHESTRATOR AGENT] Model: {args.model} (v{state.model_version})")
 
         # Seed scores
         if args.scores:
             from loop import parse_scores_from_json_str
             seeded = parse_scores_from_json_str(args.scores)
             state.record_eval(seeded)
-            log_print(f"[orchestrator] Seeded {len(seeded)} scores")
+            log_print(f"[ORCHESTRATOR AGENT] Seeded {len(seeded)} scores")
         elif args.log:
             from loop import parse_scores_from_log
             seeded = parse_scores_from_log(args.log)
             state.record_eval(seeded)
-            log_print(f"[orchestrator] Seeded {len(seeded)} scores from {args.log}")
+            log_print(f"[ORCHESTRATOR AGENT] Seeded {len(seeded)} scores from {args.log}")
 
         # Clear action history for new session (keeps budget tracking)
         state.action_history = []
