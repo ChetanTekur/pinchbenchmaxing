@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Register a fine-tuned GGUF model in Ollama with correct chat template and tool support
 #
-# Dynamically extracts the Modelfile template from the base Ollama model
-# (e.g. gemma3:1b, qwen3:8b) so it works with any model family.
+# Usage:
+#   bash register_model.sh              # uses config defaults (unversioned)
+#   bash register_model.sh v9           # registers version 9
+#   bash register_model.sh v9 my-model  # version 9 with custom ollama name
 #
-# Override values with env vars: GGUF_PATH, OLLAMA_MODEL, BASE_OLLAMA_MODEL.
+# Override values with env vars: GGUF_PATH, OLLAMA_MODEL, PBM_MODEL_NAME, BASE_OLLAMA_MODEL.
 
 set -euo pipefail
 
@@ -13,9 +15,17 @@ PROJECT_ROOT="$SCRIPT_DIR/.."
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT"
 
+# ── Handle version argument ───────────────────────────────────────────────────
+if [ -n "${1:-}" ]; then
+    VERSION="${1#v}"  # strip leading 'v' if present
+    BASE_NAME=$(python3 -c "from utils.config import load_config; print(load_config()._data['model']['name'])")
+    export PBM_MODEL_NAME="${BASE_NAME}-v${VERSION}"
+    echo "Using versioned model: $PBM_MODEL_NAME"
+fi
+
 # ── Derive paths from config ──────────────────────────────────────────────────
 GGUF_PATH="${GGUF_PATH:-$(python3 -c "from utils.config import load_config; print(load_config().gguf_file)")}"
-MODEL_NAME="${OLLAMA_MODEL:-$(python3 -c "from utils.config import load_config; print(load_config().ollama_model_name)")}"
+MODEL_NAME="${OLLAMA_MODEL:-${2:-$(python3 -c "from utils.config import load_config; print(load_config().ollama_model_name)")}}"
 
 # Map HuggingFace model names to Ollama base model names for template extraction
 # Override with BASE_OLLAMA_MODEL env var for custom mappings
