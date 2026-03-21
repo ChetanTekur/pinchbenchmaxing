@@ -32,7 +32,7 @@ DATA_DIR   = _cfg.data_dir
 TRAIN_FILE = _cfg.train_file
 VAL_FILE   = _cfg.val_file
 MODEL      = _cfg.claude.generation
-EXAMPLES_PER_TASK = 10
+EXAMPLES_PER_TASK = 10  # default; each API call generates max 3 in batches
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -262,38 +262,49 @@ def cmd_run(log_dir: Path, tasks: list[str], n_per_task: int = EXAMPLES_PER_TASK
         print(f"  {task_id}: score={failure.get('score', '?')}, "
               f"patterns={failure.get('patterns', [])}")
 
-        prompt = build_adversarial_prompt(
-            task_id, TASKS[task_id], failure, n_per_task
-        )
+        # Generate in batches of 3 (Claude reliably produces 3 per call)
+        BATCH_SIZE = 3
+        n_batches = (n_per_task + BATCH_SIZE - 1) // BATCH_SIZE
+        parsed = []
 
-        try:
-            resp = client.messages.create(
-                model=MODEL, max_tokens=12000,
-                messages=[{"role": "user", "content": prompt}],
+        for batch_idx in range(n_batches):
+            batch_n = min(BATCH_SIZE, n_per_task - len(parsed))
+            if batch_n <= 0:
+                break
+
+            prompt = build_adversarial_prompt(
+                task_id, TASKS[task_id], failure, batch_n
             )
-            raw_text = resp.content[0].text.strip()
-            examples = extract_json_array(raw_text)
 
-            if not examples:
-                print(f"    ✗ Could not parse response")
-                results["errors"].append({"task": task_id, "error": "parse_failure"})
-                continue
+            try:
+                resp = client.messages.create(
+                    model=MODEL, max_tokens=8192,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw_text = resp.content[0].text.strip()
+                examples = extract_json_array(raw_text)
 
-            parsed = []
-            for ex in examples:
-                p = parse_example(ex, task_id)
-                if p:
-                    p["source"] = "adversarial"
-                    parsed.append(p)
+                if not examples:
+                    print(f"    ✗ Batch {batch_idx+1}: could not parse response")
+                    results["errors"].append({"task": task_id, "error": f"parse_failure_batch_{batch_idx}"})
+                    continue
 
-            all_new.extend(parsed)
-            results["per_task"][task_id] = len(parsed)
-            results["total_generated"] += len(parsed)
-            print(f"    ✓ Generated {len(parsed)} adversarial examples")
+                for ex in examples:
+                    p = parse_example(ex, task_id)
+                    if p:
+                        p["source"] = "adversarial"
+                        parsed.append(p)
 
-        except Exception as e:
-            print(f"    ✗ API error: {e}")
-            results["errors"].append({"task": task_id, "error": str(e)})
+                print(f"    Batch {batch_idx+1}: {len(examples)} examples")
+
+            except Exception as e:
+                print(f"    ✗ Batch {batch_idx+1} API error: {e}")
+                results["errors"].append({"task": task_id, "error": str(e)})
+
+        all_new.extend(parsed)
+        results["per_task"][task_id] = len(parsed)
+        results["total_generated"] += len(parsed)
+        print(f"    ✓ Generated {len(parsed)} adversarial examples total")
 
     # Append to train file (adversarial examples go to train only, not val)
     if all_new:
