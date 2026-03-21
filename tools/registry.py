@@ -15,7 +15,7 @@ from .training_tools import (
     train, convert, register, validate_model, benchmark, check_disk,
 )
 from .reasoning_tools import diagnose, plan_strategy
-from .eval_tools import get_state, request_approval
+from .eval_tools import get_state, request_approval, write_note
 
 
 # ── Tool Schemas (Anthropic tool_use format) ─────────────────────────────────
@@ -368,6 +368,25 @@ TOOL_SCHEMAS = [
         },
     },
     {
+        "name": "write_note",
+        "description": (
+            "Write a note to your scratchpad. Notes persist across turns and are "
+            "shown at the start of every turn. Use this to record learnings, "
+            "track what failed and why, and remind yourself what to do next. "
+            "Costs nothing — use freely."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "type": "string",
+                    "description": "The note to save. Be specific — include error names, versions, task IDs.",
+                },
+            },
+            "required": ["note"],
+        },
+    },
+    {
         "name": "request_approval",
         "description": (
             "Pause execution and request human approval before proceeding "
@@ -411,6 +430,7 @@ _DISPATCH = {
     "push_hf":              push_hf,
     "get_state":            get_state,
     "request_approval":     request_approval,
+    "write_note":           write_note,
 }
 
 

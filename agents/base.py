@@ -138,6 +138,7 @@ class AgentState:
     action_history:      list  = field(default_factory=list)  # [{turn, action, result_summary, cost}]
     budget_spent_usd:    float = 0.0
     base_model:          str   = ""   # tracks which HF model this state is for
+    scratchpad:          list  = field(default_factory=list)  # [{timestamp, note}] — agent's working memory
 
     @property
     def avg_score(self) -> float:
@@ -213,6 +214,7 @@ class AgentState:
             "action_history":      self.action_history,
             "budget_spent_usd":    self.budget_spent_usd,
             "base_model":          self.base_model,
+            "scratchpad":          self.scratchpad,
         }
 
     @classmethod
@@ -236,6 +238,7 @@ class AgentState:
             action_history=       d.get("action_history", []),
             budget_spent_usd=     d.get("budget_spent_usd", 0.0),
             base_model=           d.get("base_model", ""),
+            scratchpad=           d.get("scratchpad", []),
         )
 
 

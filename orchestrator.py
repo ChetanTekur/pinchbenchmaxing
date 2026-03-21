@@ -200,6 +200,13 @@ def build_turn_context(state: AgentState, cfg) -> str:
 
     budget_remaining = cfg.orchestrator.budget_usd - state.budget_spent_usd
 
+    # Scratchpad notes
+    scratchpad_text = ""
+    if state.scratchpad:
+        scratchpad_text = "\n".join(
+            f"  [{n['timestamp']}] {n['note']}" for n in state.scratchpad[-10:]
+        )
+
     return f"""## Current State
 
 Model: v{state.model_version} ({state.current_ollama_model or 'none'})
@@ -211,6 +218,9 @@ Budget remaining: ${budget_remaining:.2f}
 
 ## Scores
 {scores_summary or '(no scores yet)'}
+
+## Scratchpad (your notes from earlier turns)
+{scratchpad_text or '(empty — use write_note to save reminders)'}
 
 ## Action History
 {history_text or '(first turn — no actions yet)'}

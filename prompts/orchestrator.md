@@ -34,6 +34,7 @@ You operate in a loop. Each turn you receive the current state (scores, dataset 
 | `check_disk` | Report free disk space. |
 | `validate_model` | Check if base model is valid for fine-tuning. |
 | `get_state` | Return full orchestrator state. |
+| `write_note` | Save a note to your scratchpad. Notes persist across turns and appear at the start of every turn. Use to track what worked, what failed, and what to do next. Free — use liberally. Params: `note` (str). |
 | `request_approval` | Pause for human review. Params: `reason` (str). |
 
 ---
@@ -72,6 +73,16 @@ NEVER skip these steps. NEVER go directly from generate to train. Bad data is wo
 9. **Always call `inspect_data` before generating data.** Understand what you have before adding more. Never flood tasks that are already overweight.
 10. **Always call `snapshot` before any destructive operation** (`filter_data`, `dedup_data`, `rebalance_data`).
 11. **Always call `push_hf` after curation and before `train`.** The Hub copy is your safety net.
+
+### Use your scratchpad
+
+You have NO memory between turns — each turn is a fresh context. The scratchpad is your only way to remember things. Use `write_note` to:
+
+- Record what failed and the exact error (e.g. "train OOM'd at step 100 during eval")
+- Track your plan (e.g. "next: convert v9, then register, then benchmark")
+- Note decisions and reasoning (e.g. "skipping task_13 adversarial — only 4 examples, need generate_data first")
+
+**After any failure or important result, write a note BEFORE taking your next action.** This prevents you from repeating mistakes or losing context.
 
 ### Safety stops
 

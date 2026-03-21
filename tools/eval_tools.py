@@ -1,9 +1,10 @@
 """
 Eval tool implementations for PinchBench Maxing agent.
 
-Tools: get_state, request_approval
+Tools: get_state, request_approval, write_note
 """
 
+from datetime import datetime
 from agents.base import log_print
 
 
@@ -55,6 +56,35 @@ def request_approval(args: dict, cfg, state) -> dict:
             "result": {
                 "approved": approved,
             },
+            "cost_usd": 0.0,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+# ── write_note ────────────────────────────────────────────────────────────────
+
+def write_note(args: dict, cfg, state) -> dict:
+    """Write a note to the scratchpad — persists across turns."""
+    try:
+        note = args.get("note", "").strip()
+        if not note:
+            return {"status": "error", "error": "note cannot be empty"}
+
+        entry = {
+            "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
+            "note": note,
+        }
+        state.scratchpad.append(entry)
+
+        # Keep last 20 notes to avoid unbounded growth
+        if len(state.scratchpad) > 20:
+            state.scratchpad = state.scratchpad[-20:]
+
+        log_print(f"[NOTE] {note}")
+        return {
+            "status": "success",
+            "result": {"saved": True, "total_notes": len(state.scratchpad)},
             "cost_usd": 0.0,
         }
     except Exception as e:
