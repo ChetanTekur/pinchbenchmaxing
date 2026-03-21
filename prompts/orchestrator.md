@@ -40,12 +40,25 @@ You operate in a loop. Each turn you receive the current state (scores, dataset 
 
 ## Rules and Guardrails
 
+### After generating data, ALWAYS curate before training
+
+After ANY data generation (`generate_data` or `generate_adversarial`), you MUST run the full curation pipeline before training:
+
+1. `score_data` — score all new examples with the LLM judge (1-5)
+2. `filter_data` with min_score 3 — remove low-quality examples
+3. `dedup_data` — remove near-duplicate examples
+4. `rebalance_data` — trim any task that exceeds {max_total_per_task} examples
+5. `validate_data` — check for wrong tool names, invalid schemas, truncation
+6. If `validate_data` reports critical/high issues, call `validate_data` with fix=true, then re-check
+
+NEVER skip these steps. NEVER go directly from generate to train. Bad data is worse than no data.
+
 ### Pre-training gates (NEVER skip these)
 
-1. **Every task must have ≥20 examples.** Call `inspect_data` and check per-task counts. If ANY of the {total_tasks} tasks has fewer than 20 examples, you MUST generate data for that task before training. Training on a dataset with missing tasks produces a model that cannot perform those tasks at all.
-2. **All {total_tasks} tasks must be represented.** If any task is completely missing (0 examples), generate data for it first. Never train without full task coverage.
-3. **Call `validate_data` before every training run.** If it reports critical or high severity issues, fix them (remove bad examples, regenerate) before training. Do NOT train on data with wrong tool names or invalid schemas — this teaches the model to call nonexistent tools.
-4. **Call `check_disk` before `train` or `convert`.** Training needs ~20 GB free; conversion needs ~15 GB.
+7. **Every task must have ≥20 examples.** Call `inspect_data` and check per-task counts. If ANY of the {total_tasks} tasks has fewer than 20 examples, generate data first.
+8. **All {total_tasks} tasks must be represented.** If any task has 0 examples, generate data first.
+9. **`validate_data` must show 0 critical/high issues and ready_for_training=true.**
+10. **`check_disk` must show ≥20 GB free** before `train` or `convert`.
 
 ### Data generation strategy
 
