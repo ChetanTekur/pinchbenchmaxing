@@ -80,9 +80,59 @@ def _check_cuda_compatibility() -> dict:
         return {"ok": False, "error": f"GPU check failed: {e}"}
 
 
+def _check_data_coverage(cfg) -> dict:
+    """
+    HARD GATE: Refuse to train if data coverage is insufficient.
+    This is NOT a suggestion — training literally cannot proceed without this.
+    """
+    train_file = cfg.train_file
+    if not train_file.exists():
+        return {"ok": False, "error": "train.jsonl does not exist"}
+
+    import json
+    from collections import Counter
+    counts = Counter()
+    for line in train_file.read_text().splitlines():
+        line = line.strip()
+        if line:
+            try:
+                rec = json.loads(line)
+                counts[rec.get("task_id", "unknown")] += 1
+            except json.JSONDecodeError:
+                pass
+
+    min_per_task = cfg._data.get("data", {}).get("min_per_task", 40)
+    missing = [t for t in TASK_IDS if counts.get(t, 0) == 0]
+    below_min = {t: counts.get(t, 0) for t in TASK_IDS
+                 if 0 < counts.get(t, 0) < min_per_task}
+
+    errors = []
+    if missing:
+        errors.append(
+            f"BLOCKED: {len(missing)} tasks have ZERO examples: {missing}. "
+            f"Generate data for these tasks before training."
+        )
+    if below_min:
+        errors.append(
+            f"BLOCKED: {len(below_min)} tasks below minimum ({min_per_task}): "
+            f"{below_min}. Generate more data for these tasks."
+        )
+
+    if errors:
+        return {"ok": False, "error": " | ".join(errors)}
+
+    return {"ok": True, "task_counts": dict(counts)}
+
+
 def train(args: dict, cfg, state) -> dict:
     """Fine-tune the model: prepare SFT data, run Unsloth LoRA training."""
     try:
+        # HARD GATE: check data coverage — cannot be bypassed
+        coverage = _check_data_coverage(cfg)
+        if not coverage["ok"]:
+            log_print(f"  [train] {coverage['error']}")
+            return {"status": "error", "error": coverage["error"]}
+
         # Preflight: check CUDA compatibility before spending time
         cuda_check = _check_cuda_compatibility()
         if not cuda_check["ok"]:
