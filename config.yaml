@@ -1,8 +1,8 @@
 model:
   # HuggingFace base model to fine-tune
-  base: google/gemma-3-1b-it
+  base: Qwen/Qwen3.5-9B
   # Short name used for output directories and Ollama model name
-  name: gemma3-1b-clawd
+  name: qwen35-9b-clawd
 
 paths:
   # Root workspace — override with PBM_WORKSPACE env var
