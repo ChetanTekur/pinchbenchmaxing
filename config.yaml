@@ -49,7 +49,7 @@ loop:
   target_score: 0.85          # stop when benchmark score exceeds this
   weak_task_threshold: 0.50   # tasks below this get more synthetic data each iteration
   max_new_per_task: 30        # max NEW examples per task per iteration
-  max_total_per_task: 100     # hard cap: rebalance trims any task above this before training
+  max_total_per_task: 120     # hard cap: rebalance trims any task above this before training
   total_new_examples_cap: 300 # max total new examples per iteration
 
 orchestrator:
