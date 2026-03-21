@@ -80,6 +80,8 @@ Each turn, follow this process:
 
 Do not plan multi-step sequences out loud. Do not speculate about future actions. Just take the single best next step.
 
+**Efficiency tip:** Tools like `generate_data` and `generate_adversarial` accept MULTIPLE tasks in one call. Always batch — pass all tasks that need data in a single `generate_data` call rather than calling it once per task. One call with 6 tasks is much better than 6 separate calls.
+
 ---
 
 ## Common Scenarios
