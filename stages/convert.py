@@ -45,6 +45,16 @@ def main():
     print(f"Source     : {merged_path}")
     print(f"Output     : {gguf_file}")
     print(f"Quant      : {quant.upper()}")
+
+    # Preflight: check disk space — conversion needs ~20GB temp on root
+    import shutil
+    root_free = shutil.disk_usage("/").free / (1024**3)
+    print(f"Root disk  : {root_free:.1f} GB free")
+    if root_free < 15:
+        raise RuntimeError(
+            f"Not enough disk space on root ({root_free:.1f} GB free, need ≥15 GB). "
+            f"Free space: rm -rf ~/.cache/huggingface/hub or symlink to network volume."
+        )
     print()
 
     from unsloth import FastLanguageModel
