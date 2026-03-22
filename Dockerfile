@@ -70,13 +70,14 @@ COPY scripts/set_env.sh  /root/scripts/set_env.sh
 RUN chmod +x /root/scripts/*.sh
 
 # ── ENV ───────────────────────────────────────────────────────────────────────
-# HF cache on network volume — root disk is only 50GB, model weights eat 19GB+
-ENV HF_HOME="/workspace/synthbench/.cache/huggingface" \
-    TRANSFORMERS_CACHE="/workspace/synthbench/.cache/huggingface/hub" \
+# PBM_WORKSPACE must be defined first — other vars reference it
+ENV PBM_WORKSPACE="/workspace/synthbench" \
+    PYTHONPATH="/root/pbm" \
     PATH="/root/.local/bin:/root/.openclaw/bin:/usr/local/bin:${PATH}" \
-    OLLAMA_HOST="0.0.0.0:11434" \
-    PBM_WORKSPACE="/workspace/synthbench" \
-    PYTHONPATH="/root/pbm"
+    OLLAMA_HOST="0.0.0.0:11434"
+# HF cache on network volume — root disk is only 50GB, model weights eat 19GB+
+ENV HF_HOME="${PBM_WORKSPACE}/.cache/huggingface" \
+    TRANSFORMERS_CACHE="${PBM_WORKSPACE}/.cache/huggingface/hub"
 
 WORKDIR /root/pbm
 
