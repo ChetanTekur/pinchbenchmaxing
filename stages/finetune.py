@@ -151,9 +151,11 @@ def main():
         weight_decay                =float(t["weight_decay"]),
         max_grad_norm               =float(t["max_grad_norm"]),
         logging_steps               =10,
+        logging_strategy            ="steps",
         save_steps                  =50,
         eval_strategy               ="no",     # eval OOMs on 24GB; train loss is sufficient
         save_total_limit            =3,
+        disable_tqdm                =True,     # tqdm \r overwrites loss lines in captured output
         bf16                        =True,
         max_seq_length              =t["max_seq_len"],
         dataset_text_field          ="text",

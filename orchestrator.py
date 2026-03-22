@@ -530,6 +530,46 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
 # ENTRY POINT
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _auto_resume_note(state: AgentState, cfg) -> None:
+    """Auto-generate a scratchpad note about what's already done based on state."""
+    ds = state.last_data_summary
+    if not ds:
+        return  # no prior data info, can't infer
+
+    parts = []
+    missing = ds.get("missing", [])
+    below = ds.get("below_40", {})
+    total = ds.get("total", 0)
+
+    if total > 0 and not missing and not below:
+        parts.append(f"Data looks ready ({total} examples, all tasks ≥40)")
+        parts.append("Skip data generation and curation")
+
+        # Figure out what's next
+        if state.model_version > 0 and state.scores:
+            # We have a model and scores — check if we need to retrain
+            parts.append(f"Current score: {state.avg_score:.1%} (v{state.model_version})")
+            if state.avg_score < cfg.loop.target_score:
+                next_ver = state.model_version + 1
+                parts.append(f"Next: push_hf → train v{next_ver} → convert → register → benchmark")
+        else:
+            parts.append("Next: push_hf → train → convert → register → benchmark")
+    elif missing:
+        parts.append(f"DATA INCOMPLETE: {len(missing)} tasks missing: {missing}")
+        parts.append("Must generate_data first")
+    elif below:
+        parts.append(f"DATA LOW: {len(below)} tasks below 40: {below}")
+        parts.append("Must generate_data to backfill")
+
+    if parts:
+        note = " | ".join(parts)
+        state.scratchpad.append({
+            "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
+            "note": f"[AUTO-RESUME] {note}",
+        })
+        log_print(f"[ORCHESTRATOR AGENT] Auto-resume: {note}")
+
+
 def main():
     cfg = load_config()
 
@@ -603,6 +643,9 @@ def main():
                 "note": args.note,
             })
             log_print(f"[ORCHESTRATOR AGENT] Note: {args.note}")
+
+        # Auto-generate resumption note from previous session state
+        _auto_resume_note(state, cfg)
 
         save_state(state, state_file)
         run_orchestrator(cfg, state, state_file, dry_run=args.dry_run)
