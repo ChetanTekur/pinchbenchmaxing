@@ -35,6 +35,17 @@ grep -qxF "export PYTHONPATH=$REPO_DIR" ~/.bashrc 2>/dev/null \
 grep -qxF 'export PATH="$HOME/.local/bin:$HOME/.openclaw/bin:/usr/local/bin:$PATH"' ~/.bashrc 2>/dev/null \
     || echo 'export PATH="$HOME/.local/bin:$HOME/.openclaw/bin:/usr/local/bin:$PATH"' >> ~/.bashrc
 
+# ── 0. Move HF cache to network volume (root disk is only 50GB) ────────────
+HF_CACHE="$HOME/.cache/huggingface"
+HF_CACHE_NV="$WORKSPACE/.cache/huggingface"
+if [ ! -L "$HF_CACHE" ]; then
+    echo "=== Moving HuggingFace cache to network volume ==="
+    mkdir -p "$HF_CACHE_NV"
+    rm -rf "$HF_CACHE"
+    ln -s "$HF_CACHE_NV" "$HF_CACHE"
+    echo "  $HF_CACHE → $HF_CACHE_NV"
+fi
+
 # ── 0a. Load persistent env vars (API keys) ──────────────────────────────────
 if [ -f "$ENV_FILE" ]; then
     echo "=== [0/5] Loading env vars from $ENV_FILE ==="
