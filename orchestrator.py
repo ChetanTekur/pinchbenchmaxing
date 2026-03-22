@@ -545,6 +545,8 @@ def main():
                        help="Seed scores from benchmark log file")
     run_p.add_argument("--dry-run", action="store_true",
                        help="Claude decides but tools don't execute")
+    run_p.add_argument("--note", type=str, default="",
+                       help="Seed a scratchpad note (e.g. 'data is clean, skip to train v10')")
 
     sub.add_parser("status", help="Show current state")
 
@@ -590,9 +592,17 @@ def main():
             state.record_eval(seeded)
             log_print(f"[ORCHESTRATOR AGENT] Seeded {len(seeded)} scores from {args.log}")
 
-        # Fresh session — reset budget and action history
+        # Fresh session — reset budget and action history (keep scratchpad)
         state.action_history = []
         state.budget_spent_usd = 0.0
+
+        # Seed scratchpad note from CLI
+        if args.note:
+            state.scratchpad.append({
+                "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
+                "note": args.note,
+            })
+            log_print(f"[ORCHESTRATOR AGENT] Note: {args.note}")
 
         save_state(state, state_file)
         run_orchestrator(cfg, state, state_file, dry_run=args.dry_run)
