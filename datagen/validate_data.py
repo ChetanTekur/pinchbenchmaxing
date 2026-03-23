@@ -110,7 +110,7 @@ TOOL_NAME_TYPOS = {
 # benchmark), NOT theoretical ideal. v8 scored 79-95% on task_16/17 using
 # list_files + read_file (file I/O), not search_emails.
 REQUIRED_TOOLS = {
-    "task_01_calendar": ["create_calendar_event"],
+    "task_01_calendar": ["write_file"],  # .ics file must be created; can use create_calendar_event or write_file or run_python
     "task_02_stock": ["web_search"],
     "task_03_blog": ["write_file"],
     "task_04_weather": ["write_file"],
@@ -126,7 +126,7 @@ REQUIRED_TOOLS = {
     "task_14_humanizer": ["read_file", "write_file"],
     "task_15_daily_summary": ["read_file", "write_file"],
     "task_16_email_triage": ["list_files", "read_file", "write_file"],  # reads email files from directory
-    "task_17_email_search": ["list_files", "read_file", "write_file"],  # reads email files from directory
+    "task_17_email_search": ["list_files", "read_file"],  # reads email files; summary can be in final message or written to file
     "task_18_market_research": ["web_search", "write_file"],
     "task_19_spreadsheet_summary": ["read_file", "write_file"],
     "task_20_eli5_pdf": ["read_file", "write_file"],
