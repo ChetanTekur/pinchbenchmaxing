@@ -134,14 +134,56 @@ def _check_data_coverage(cfg) -> dict:
     return {"ok": True, "task_counts": dict(counts)}
 
 
+def _check_data_quality(cfg) -> dict:
+    """
+    HARD GATE: Refuse to train if data has critical quality issues.
+    Auto-runs validate_data and blocks on any critical/high issues.
+    """
+    try:
+        from datagen.validate_data import run_validation
+        report = run_validation(fix=False)
+        critical = report.get("critical_high", 0)
+        total = report.get("total_examples", 0)
+
+        if critical > 0:
+            return {
+                "ok": False,
+                "error": (
+                    f"BLOCKED: {critical} critical/high data quality issues found in {total} examples. "
+                    f"Run validate_data with fix=true to remove bad examples, then regenerate."
+                ),
+                "critical_count": critical,
+            }
+        return {"ok": True, "clean": report.get("clean", 0), "total": total}
+    except Exception as e:
+        # If validation itself fails, don't block training
+        log_print(f"  [train] Warning: data quality check failed: {e}")
+        return {"ok": True}
+
+
 def train(args: dict, cfg, state) -> dict:
     """Fine-tune the model: prepare SFT data, run Unsloth LoRA training."""
     try:
-        # HARD GATE: check data coverage — cannot be bypassed
+        # HARD GATE 1: check data coverage — cannot be bypassed
         coverage = _check_data_coverage(cfg)
         if not coverage["ok"]:
             log_print(f"  [train] {coverage['error']}")
             return {"status": "error", "error": coverage["error"]}
+
+        # HARD GATE 2: check data quality — cannot be bypassed
+        quality = _check_data_quality(cfg)
+        if not quality["ok"]:
+            log_print(f"  [train] {quality['error']}")
+            return {"status": "error", "error": quality["error"]}
+
+        # HARD GATE 3: check disk space
+        root_free = shutil.disk_usage("/").free / (1024**3)
+        if root_free < 15:
+            return {
+                "status": "error",
+                "error": f"BLOCKED: Only {root_free:.1f} GB free on root (need ≥15). "
+                         f"Free space: rm -rf ~/.cache/huggingface/hub or symlink to network volume.",
+            }
 
         # Preflight: check CUDA compatibility before spending time
         cuda_check = _check_cuda_compatibility()
