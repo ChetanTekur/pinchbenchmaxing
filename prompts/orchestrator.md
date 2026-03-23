@@ -57,22 +57,53 @@ Your workflow follows this cycle: **Analyze → Hypothesize → Fix Data → Val
 
 After receiving benchmark scores, **understand WHY tasks are failing before changing any data.**
 
-1. Call `diagnose` — it examines benchmark transcripts and produces root causes per task.
-2. Call `plan_strategy` with the diagnosis — it produces a targeted data plan.
-3. `write_note` with your hypotheses: "task_13 fails because training data uses 'image' tool instead of 'generate_image'" or "task_09 only creates 1 file because examples don't show multi-file chains."
+#### Step A: Diagnose failures from benchmark transcripts
 
-**DO NOT skip analysis and jump to generating data.** Blind data generation is how you get worse, not better. You must understand the failure mode before you can fix it.
+Call `diagnose`. It examines the actual benchmark transcripts — what the model DID vs what it SHOULD have done. For each failing task, it identifies the specific failure:
+- "model called 'image' tool instead of 'generate_image'"
+- "model read one file then stopped, never wrote the output"
+- "model looped on the same tool call 5 times"
+- "model used wrong argument names for create_calendar_event"
+
+#### Step B: Check if training data has the same problem
+
+This is the critical step most people skip. After diagnosing what the model did wrong, **inspect the training data for those tasks to see if the data teaches the wrong behavior.**
+
+- If the model used the wrong tool name → check: does the training data use the right tool name?
+- If the model stopped after one step → check: do the training examples show complete multi-step chains?
+- If the model looped → check: do the training examples have repetitive tool calls?
+
+Call `validate_data` to check tool names and schemas. But also think critically: even if validate_data says "clean," the data might teach incomplete behavior (e.g., reading a file but never writing the output).
+
+#### Step C: Form hypotheses and record them
+
+`write_note` with specific, testable hypotheses per failing task:
+- "task_13: 90% of training examples use 'image' instead of 'generate_image' → model learned wrong tool. Fix: validate fix=true removes them, regenerate with correct tool name."
+- "task_09: training examples create 1-2 files but benchmark requires 8. Fix: generate examples with full file structure."
+- "task_17: training data shows search_emails tool but benchmark uses list_files + read_file. Fix: regenerate with correct tools."
+
+#### Step D: Evaluate whether previously added data helped
+
+Compare current scores against previous benchmark. For each task:
+- **Score improved**: the data helped. Keep it.
+- **Score unchanged**: the data didn't hurt but didn't help. May need different approach (adversarial, different variation).
+- **Score got WORSE**: the data was counterproductive. Consider removing it — the base model may have been better without it.
+
+`write_note` with your evaluation: "task_12 had 0 data and scored 100% on v8. We added 50 examples and it dropped to 0%. The added data was bad. Remove it and let base model handle it."
+
+**DO NOT skip analysis and jump to generating data.** Blind data generation is how you get worse, not better.
 
 ### Phase 2: Fix Data (targeted, not blind)
 
-Based on your diagnosis:
+Based on your analysis, take the minimum action needed:
 
-1. **If bad data exists**: call `validate_data` then `validate_data fix=true` to remove examples with wrong tool names, missing tools, or broken patterns.
-2. **If data is missing or insufficient**: call `generate_data` for specific tasks, passing the `diagnosis_file` so generation is targeted to fix the identified failure patterns.
-3. **If data exists but doesn't teach the right behavior**: consider `generate_adversarial` which learns from actual benchmark failure transcripts to create corrective examples.
-4. **If old data is counterproductive**: removing bad data for a task the base model already handles well can IMPROVE scores. Sometimes less is more.
+1. **Bad data exists (wrong tools, broken patterns)**: call `validate_data fix=true` to remove. Then check if the task still has ≥40 examples. Only regenerate if it dropped below minimum.
+2. **Data teaches wrong behavior but passes validation**: the examples are syntactically valid but semantically wrong (e.g., reads file but never writes output). You need to regenerate for this task with the `diagnosis_file` so generation targets the specific fix.
+3. **Data is missing or insufficient**: call `generate_data` with `diagnosis_file` for targeted generation that addresses the specific failure pattern.
+4. **Previously added data made scores worse**: consider removing that data entirely. If the base model scored well on a task without fine-tuning data, adding bad data destroys that capability. Sometimes the fix is LESS data, not more.
+5. **Data exists, is clean, but task still fails**: use `generate_adversarial` which learns from the actual benchmark failure transcripts to create corrective examples.
 
-**Be cost-effective.** Data generation is expensive. Don't regenerate data that's already clean. Don't throw away data that might still be useful. Target your fixes to the specific failure modes identified in analysis.
+**Be cost-effective.** Data generation is expensive (~$0.04/example). Don't regenerate data that's already clean. Don't throw away data that might still be useful. Target your fixes to the specific failure modes identified in analysis. One well-targeted batch of 20 examples is worth more than 100 blind ones.
 
 ### Phase 3: Validate (mandatory before training)
 
