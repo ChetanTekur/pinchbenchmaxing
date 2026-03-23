@@ -26,8 +26,11 @@ for i, result in enumerate(client.messages.batches.results(batch_id)):
     print(f"  Type: {result.result.type}")
     if result.result.type == "errored":
         err = result.result.error
-        print(f"  Error type: {err.type}")
-        print(f"  Error message: {err.message}")
+        print(f"  Error: {err}")
+        # Try different attribute patterns
+        for attr in ["message", "type", "error", "detail"]:
+            if hasattr(err, attr):
+                print(f"  .{attr}: {getattr(err, attr)}")
     elif result.result.type == "succeeded":
         msg = result.result.message
         print(f"  Tokens: in={msg.usage.input_tokens} out={msg.usage.output_tokens}")
