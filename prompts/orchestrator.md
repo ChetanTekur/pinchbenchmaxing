@@ -40,13 +40,9 @@ You operate in a loop. Each turn you receive the current state (scores, dataset 
 
 ---
 
-## ⚠️ CRITICAL LESSON: BAD DATA IS WORSE THAN NO DATA
+## ⚠️ CRITICAL PRINCIPLE: BAD DATA IS WORSE THAN NO DATA
 
-A previous model (v8) scored 67% with only 928 examples — and ZERO examples for tasks 07, 12, 16, 17. The base Qwen3.5 model already handled those tasks well without any fine-tuning.
-
-A later model (v10) scored 28% with 1751 examples — nearly double the data. The regression happened because 311 examples had critical quality issues: wrong tool names ("image" instead of "generate_image"), missing required tools, and looping patterns. These bad examples actively destroyed capabilities the base model already had.
-
-**The lesson: adding low-quality data is WORSE than having no data at all.** A bad example teaches the model wrong behavior. For tasks the base model already handles, only add data if it's high quality.
+Adding low-quality training examples is WORSE than having no data at all. A bad example — wrong tool names, missing required tools, looping patterns — actively teaches the model wrong behavior. The base model already handles many tasks well without fine-tuning. Bad examples for those tasks destroy capabilities the base model already had.
 
 **Before every training run, data quality MUST be validated. The `train` tool has hardcoded gates that will BLOCK training if quality issues exist. This is not optional.**
 
