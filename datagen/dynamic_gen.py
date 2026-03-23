@@ -84,8 +84,11 @@ def build_dynamic_meta_prompt(
     criteria, this reads the full benchmark definition so Claude knows
     EXACTLY what the benchmark tests for.
     """
-    # Full benchmark task content from the .md file
+    # Benchmark task content — cap at 4000 chars to avoid hitting input token limits
+    # (some tasks like task_19 have 1300-line .md files with full grading code)
     raw_content = task_def["raw_content"]
+    if len(raw_content) > 4000:
+        raw_content = raw_content[:4000] + "\n\n[... task definition truncated for token budget ...]"
 
     # Build expected files / values hints if available
     files_hint = ""
