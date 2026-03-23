@@ -187,7 +187,7 @@ TASKS = {
             "Has a greeting and a closing/signature",
             "Length is 50-150 words",
         ],
-        "tools_needed": ["write_file"],
+        "tools_needed": ["draft_email", "write_file"],
         "complexity": "easy",
     },
     "task_08_memory": {

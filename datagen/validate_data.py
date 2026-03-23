@@ -94,6 +94,13 @@ TOOL_NAME_TYPOS = {
 }
 
 # Tasks that MUST use specific tools
+# Required tools per task — must match what the benchmark actually expects.
+# These are validated against training data: examples missing required tools
+# get flagged as critical issues and removed by --fix.
+#
+# IMPORTANT: These must match reality (what tools the agent needs to pass the
+# benchmark), NOT theoretical ideal. v8 scored 79-95% on task_16/17 using
+# list_files + read_file (file I/O), not search_emails.
 REQUIRED_TOOLS = {
     "task_01_calendar": ["create_calendar_event"],
     "task_02_stock": ["web_search"],
@@ -101,7 +108,7 @@ REQUIRED_TOOLS = {
     "task_04_weather": ["write_file"],
     "task_05_summary": ["read_file", "write_file"],
     "task_06_events": ["web_search"],
-    "task_07_email": ["draft_email"],
+    "task_07_email": ["write_file"],  # saves email_draft.txt; draft_email also acceptable
     "task_08_memory": ["read_file", "write_file"],
     "task_09_files": ["create_directory", "write_file"],
     "task_10_workflow": ["write_file"],
@@ -110,8 +117,8 @@ REQUIRED_TOOLS = {
     "task_13_image_gen": ["generate_image"],
     "task_14_humanizer": ["read_file", "write_file"],
     "task_15_daily_summary": ["read_file", "write_file"],
-    "task_16_email_triage": ["search_emails"],
-    "task_17_email_search": ["search_emails"],
+    "task_16_email_triage": ["list_files", "read_file", "write_file"],  # reads email files from directory
+    "task_17_email_search": ["list_files", "read_file", "write_file"],  # reads email files from directory
     "task_18_market_research": ["web_search", "write_file"],
     "task_19_spreadsheet_summary": ["read_file", "write_file"],
     "task_20_eli5_pdf": ["read_file", "write_file"],
