@@ -93,9 +93,44 @@ Compare current scores against previous benchmark. For each task:
 
 **DO NOT skip analysis and jump to generating data.** Blind data generation is how you get worse, not better.
 
+### Post-Benchmark Decision Framework
+
+After analysis, classify each failing task into one of these categories before taking action.
+
+#### LEAVE ALONE — do not touch the data
+- Task already scores **90%+** — don't change data even if deep_validate flags issues
+- Task has newly generated data (from this session) that **hasn't been benchmarked yet** — test first
+- Deep validate issues are **cosmetic** (truncated tail, low diversity) but benchmark score is good
+- Task scores well and was never touched — the base model handles it fine
+
+#### FIX (targeted edit) — cheapest intervention
+- Task scores 0% and data uses **wrong filenames** vs what the benchmark expects
+- Task data uses **wrong tool names** (fixable via `validate_data fix=true` + small regenerate)
+- Task is missing a **required behavioral step** (e.g., skill installation in task_14, file write after read)
+- Only a small fraction of examples are broken — fix those, keep the rest
+
+#### REGENERATE from scratch
+- Deep validate verdict is **BAD** (completely wrong task understanding)
+- Data was generated from **old hardcoded definitions** that don't match PinchBench
+- **>50% of examples** for this task have critical validation issues
+- Task definition changed upstream and existing data is obsolete
+
+#### TRAIN AND SEE — don't pre-optimize
+- Task has **clean data** (structural validation passes) but deep validate says NEEDS_WORK for content quality
+- Task has **newly regenerated data** that hasn't been tested yet
+- **Multiple tasks regressed simultaneously** — likely a model-level issue, not per-task data problem
+- You're unsure whether the data is the problem — train first, diagnose after
+
+#### Cost-effectiveness principle
+- Don't regenerate 15 tasks when 5 targeted fixes address the root cause
+- Task scoring 0% with wrong filenames → **fix filenames** (cheap), don't regenerate
+- Task scoring 0% with clean data → **train first**, then diagnose if still failing
+- Never remove data that's working (good benchmark score) just because deep_validate flags cosmetic issues
+- One well-targeted batch of 20 examples beats 100 blind ones
+
 ### Phase 2: Fix Data (targeted, not blind)
 
-Based on your analysis, take the minimum action needed:
+Use the **Post-Benchmark Decision Framework** above to classify each task before acting. Only touch tasks in the FIX or REGENERATE categories. Tasks classified as LEAVE ALONE or TRAIN AND SEE should not have their data changed. Then take the minimum action needed:
 
 1. **Bad data exists (wrong tools, broken patterns)**: call `validate_data fix=true` to remove. Then check if the task still has ≥40 examples. Only regenerate if it dropped below minimum.
 2. **Data teaches wrong behavior but passes validation**: the examples are syntactically valid but semantically wrong (e.g., reads file but never writes output). You need to regenerate for this task with the `diagnosis_file` so generation targets the specific fix.
