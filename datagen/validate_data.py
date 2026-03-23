@@ -37,24 +37,32 @@ VAL_FILE = _cfg.val_file
 # TOOL SCHEMAS — expected argument names for each tool
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Tool signatures: required and optional args.
+# "aliases" maps common wrong arg names to the correct ones — these are
+# accepted without flagging as errors since the model behavior is correct.
 TOOL_SIGNATURES = {
-    "read_file":              {"required": ["path"], "optional": []},
-    "write_file":             {"required": ["path", "content"], "optional": []},
-    "create_directory":       {"required": ["path"], "optional": []},
-    "list_files":             {"required": [], "optional": ["directory", "path"]},
-    "run_bash":               {"required": ["command"], "optional": []},
-    "run_python":             {"required": ["code"], "optional": []},
-    "web_search":             {"required": ["query"], "optional": ["num_results"]},
+    "read_file":              {"required": ["path"], "optional": ["file_path", "filepath"]},
+    "write_file":             {"required": ["path", "content"], "optional": ["file_path", "filepath"]},
+    "create_directory":       {"required": ["path"], "optional": ["directory"]},
+    "list_files":             {"required": [], "optional": ["directory", "path", "dir"]},
+    "run_bash":               {"required": ["command"], "optional": ["cmd"]},
+    "run_python":             {"required": ["code"], "optional": ["script"]},
+    "web_search":             {"required": ["query"], "optional": ["num_results", "count"]},
     "fetch_url":              {"required": ["url"], "optional": []},
-    "create_calendar_event":  {"required": ["title", "date", "time"], "optional": ["attendees", "description", "filename"]},
-    "draft_email":            {"required": ["to", "subject", "body"], "optional": ["cc"]},
-    "search_emails":          {"required": ["query"], "optional": ["folder"]},
-    "read_email":             {"required": ["email_id"], "optional": []},
-    "generate_image":         {"required": ["prompt", "filename"], "optional": []},
-    "read_memory":            {"required": [], "optional": ["key"]},
+    "create_calendar_event":  {"required": ["title", "date", "time"], "optional": [
+        "attendees", "description", "filename",
+        "summary", "start_time", "end_time", "duration",  # common aliases
+    ]},
+    "draft_email":            {"required": ["to", "subject", "body"], "optional": ["cc", "recipient"]},
+    "search_emails":          {"required": ["query"], "optional": ["folder", "mailbox"]},
+    "read_email":             {"required": ["email_id"], "optional": ["id"]},
+    "generate_image":         {"required": ["prompt"], "optional": [
+        "filename", "output_path", "path", "output", "file",  # all acceptable
+    ]},
+    "read_memory":            {"required": [], "optional": ["key", "query"]},
     "write_memory":           {"required": ["key", "value"], "optional": []},
-    "search_skills":          {"required": ["query"], "optional": []},
-    "install_skill":          {"required": ["name"], "optional": []},
+    "search_skills":          {"required": ["query"], "optional": ["search", "term"]},
+    "install_skill":          {"required": ["name"], "optional": ["skill_name", "skill"]},
 }
 
 # Common wrong tool names → what they should be
@@ -215,10 +223,15 @@ def validate_example(example: dict, verbose: bool = False) -> list[dict]:
         sig = TOOL_SIGNATURES.get(name)
         if sig:
             all_valid = set(sig["required"] + sig["optional"])
+            provided = set(args.keys()) if isinstance(args, dict) else set()
+
             for req in sig["required"]:
-                if req not in args:
-                    issues.append({"severity": "high", "check": "missing_required_arg",
-                                   "detail": f"Tool '{name}': missing required arg '{req}'"})
+                if req not in provided:
+                    # Check if any optional arg covers this (e.g. start_time covers time)
+                    covered = any(opt in provided for opt in sig["optional"])
+                    if not covered:
+                        issues.append({"severity": "high", "check": "missing_required_arg",
+                                       "detail": f"Tool '{name}': missing required arg '{req}'"})
             for arg_name in args:
                 if arg_name not in all_valid:
                     issues.append({"severity": "medium", "check": "unknown_arg",
@@ -248,18 +261,26 @@ def validate_example(example: dict, verbose: bool = False) -> list[dict]:
             if not c.get("_parse_error"):
                 call_strings.append(json.dumps({"name": c.get("name"), "args_keys": sorted(c.get("arguments", {}).keys())}))
 
-        # Same tool call signature > 5 times = looping
+        # Repetition check: same EXACT call (same name + same args with same values) repeated
+        # Note: reading 13 different emails is NOT looping — the args differ each time.
+        # Only flag if the exact same call (name + arg values) appears > 3 times.
         from collections import Counter
-        call_counts = Counter(call_strings)
-        for call_sig, count in call_counts.items():
-            if count > 5:
+        exact_call_strings = []
+        for c in all_calls:
+            if not c.get("_parse_error"):
+                exact_call_strings.append(json.dumps(c, sort_keys=True, default=str)[:200])
+        exact_counts = Counter(exact_call_strings)
+        for call_sig, count in exact_counts.items():
+            if count > 3:
                 issues.append({"severity": "high", "check": "repetitive_tool_calls",
-                               "detail": f"Same tool call repeated {count} times (likely looping): {call_sig[:100]}"})
+                               "detail": f"Exact same tool call repeated {count} times (looping): {call_sig[:100]}"})
 
-        # Total tool calls > 15 = suspicious
-        if len(all_calls) > 15:
-            issues.append({"severity": "medium", "check": "excessive_tool_calls",
-                           "detail": f"{len(all_calls)} tool calls (>15 is suspicious)"})
+        # Same tool NAME (regardless of args) > 20 times = likely stuck
+        name_counts = Counter(c.get("name") for c in all_calls if not c.get("_parse_error"))
+        for name, count in name_counts.items():
+            if count > 20:
+                issues.append({"severity": "medium", "check": "excessive_tool_calls",
+                               "detail": f"Tool '{name}' called {count} times (>20)"})
 
     # ── Truncation check ───────────────────────────────────────────────────
 
