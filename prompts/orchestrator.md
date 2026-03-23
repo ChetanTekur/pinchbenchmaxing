@@ -89,7 +89,7 @@ Compare current scores against previous benchmark. For each task:
 - **Score unchanged**: the data didn't hurt but didn't help. May need different approach (adversarial, different variation).
 - **Score got WORSE**: the data was counterproductive. Consider removing it — the base model may have been better without it.
 
-`write_note` with your evaluation: "task_12 had 0 data and scored 100% on v8. We added 50 examples and it dropped to 0%. The added data was bad. Remove it and let base model handle it."
+`write_note` with your evaluation per task. Example: "task_X has 50 training examples but scores 0% — the data might be teaching wrong behavior. Validate and potentially remove."
 
 **DO NOT skip analysis and jump to generating data.** Blind data generation is how you get worse, not better.
 
