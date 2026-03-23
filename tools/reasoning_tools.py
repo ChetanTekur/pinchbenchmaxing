@@ -197,6 +197,36 @@ def diagnose(args: dict, cfg, state) -> dict:
         judge_summary = _collect_judge_summary(cfg)
         benchmark_excerpt = _read_benchmark_log(cfg, benchmark_log_path)
 
+        # Collect bad examples detail (actual tool calls vs expectations)
+        bad_examples_summary = ""
+        bad_report_file = cfg.data_dir / "bad_examples_report.json"
+        if bad_report_file.exists():
+            try:
+                bad_examples = json.loads(bad_report_file.read_text())
+                # Group by task and summarize
+                from collections import Counter
+                bad_by_task = defaultdict(list)
+                for ex in bad_examples:
+                    bad_by_task[ex["task_id"]].append(ex)
+                parts = []
+                for tid, exs in sorted(bad_by_task.items(), key=lambda x: -len(x[1])):
+                    issue_types = Counter(i["check"] for ex in exs for i in ex["issues"])
+                    sample_tools = exs[0]["tool_calls"][:5] if exs else []
+                    parts.append(f"  {tid} ({len(exs)} bad): issues={dict(issue_types)}, "
+                                 f"sample_tools={json.dumps(sample_tools)}")
+                bad_examples_summary = "\n".join(parts[:10])
+            except Exception:
+                pass
+
+        # Collect validator expectations for comparison
+        from datagen.validate_data import TOOL_SIGNATURES, REQUIRED_TOOLS
+        validator_context = (
+            f"TOOL_SIGNATURES (what validator expects):\n"
+            f"{json.dumps({k: v for k, v in TOOL_SIGNATURES.items()}, indent=2)}\n\n"
+            f"REQUIRED_TOOLS (must appear in examples):\n"
+            f"{json.dumps(REQUIRED_TOOLS, indent=2)}"
+        )
+
         # Load prompt template
         template = _load_prompt("diagnose")
 
@@ -219,6 +249,8 @@ def diagnose(args: dict, cfg, state) -> dict:
             "validation_issues_json": json.dumps(validation_issues, indent=2),
             "judge_summary_json": json.dumps(judge_summary, indent=2),
             "benchmark_log_excerpt": benchmark_excerpt,
+            "bad_examples_summary": bad_examples_summary or "(no bad examples report found)",
+            "validator_context": validator_context,
         }
         prompt = template
         for key, value in variables.items():
