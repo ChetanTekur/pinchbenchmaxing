@@ -156,18 +156,35 @@ def load_task(task_id: str) -> dict:
     }
 
 
+# Mapping from PinchBench canonical IDs (in .md frontmatter) to our internal
+# IDs (used in training data, loop_state, TASK_IDS). PinchBench's IDs don't
+# always match ours due to task renumbering and naming differences.
+# Only entries that DIFFER need to be listed.
+_PINCHBENCH_TO_INTERNAL = {
+    "task_11_clawdhub": "task_11_config_update",
+    "task_16_market_research": "task_18_market_research",
+    "task_18_spreadsheet_summary": "task_19_spreadsheet_summary",
+    "task_20_eli5_pdf_summary": "task_20_eli5_pdf",
+}
+
+
+def _to_internal_id(pinchbench_id: str) -> str:
+    """Map PinchBench canonical ID to our internal training data ID."""
+    return _PINCHBENCH_TO_INTERNAL.get(pinchbench_id, pinchbench_id)
+
+
 def load_tasks() -> dict[str, dict]:
-    """Load all task definitions from the benchmark tasks directory."""
+    """Load all task definitions, keyed by our INTERNAL task IDs."""
     tasks_dir = _find_tasks_dir()
     tasks = {}
     for task_file in sorted(tasks_dir.glob("task_*.md")):
-        task_id = task_file.stem
-        # Normalize: task_11_clawdhub → task_11_config_update (our internal ID)
-        # We use PinchBench's canonical ID from frontmatter
         try:
-            task = load_task(task_id)
+            task = load_task(task_file.stem)
             canonical_id = task["id"]
-            tasks[canonical_id] = task
+            internal_id = _to_internal_id(canonical_id)
+            task["internal_id"] = internal_id
+            task["pinchbench_id"] = canonical_id
+            tasks[internal_id] = task
         except Exception as e:
             print(f"  Warning: failed to load {task_file.name}: {e}")
     return tasks

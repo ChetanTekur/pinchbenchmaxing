@@ -84,21 +84,12 @@ def extract_written_files(messages):
 
 
 def load_ground_truth(task_id):
-    """Load ground truth, handling ID mismatches between our data and PinchBench files."""
+    """Load ground truth — load_tasks() already maps PinchBench IDs to our internal IDs."""
     from datagen.task_loader import load_tasks
     try:
         all_tasks = load_tasks()
-
-        # Direct match
         if task_id in all_tasks:
             return all_tasks[task_id]
-
-        # Match by prefix (task_11_config_update → task_11_clawdhub)
-        prefix = "_".join(task_id.split("_")[:2])  # "task_11"
-        for tid, task in all_tasks.items():
-            if tid.startswith(prefix):
-                return task
-
         print(f"  WARNING: No ground truth found for {task_id}")
         return None
     except Exception as e:
