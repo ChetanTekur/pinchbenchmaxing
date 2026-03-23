@@ -6,16 +6,41 @@ import anthropic
 
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-print("Submitting test batch...")
+# Test 1: Real-time API
+print("Test 1: Real-time Messages API (claude-sonnet-4-6)...")
+try:
+    resp = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=50,
+        messages=[{"role": "user", "content": "Say hello in one word."}],
+    )
+    print(f"  OK: {resp.content[0].text}")
+except Exception as e:
+    print(f"  FAILED: {e}")
+
+# Test 2: Real-time with sonnet 4-5
+print("\nTest 2: Real-time Messages API (claude-sonnet-4-5)...")
+try:
+    resp = client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=50,
+        messages=[{"role": "user", "content": "Say hello in one word."}],
+    )
+    print(f"  OK: {resp.content[0].text}")
+except Exception as e:
+    print(f"  FAILED: {e}")
+
+# Test 3: Batch API
+print("\nTest 3: Batch API (claude-sonnet-4-6)...")
 batch = client.messages.batches.create(requests=[{
     "custom_id": "test_hello",
     "params": {
         "model": "claude-sonnet-4-6",
-        "max_tokens": 100,
+        "max_tokens": 50,
         "messages": [{"role": "user", "content": "Say hello in one word."}],
     },
 }])
-print(f"Batch: {batch.id}")
+print(f"  Batch: {batch.id}")
 
 while True:
     status = client.messages.batches.retrieve(batch.id)
@@ -26,8 +51,8 @@ while True:
 
 for result in client.messages.batches.results(batch.id):
     if result.result.type == "succeeded":
-        print(f"  Response: {result.result.message.content[0].text}")
+        print(f"  OK: {result.result.message.content[0].text}")
     else:
-        print(f"  Error: {result.result.error}")
+        print(f"  FAILED: {result.result.error}")
 
-print("API is working!" if status.request_counts.succeeded > 0 else "API has issues.")
+print("\nDone.")
