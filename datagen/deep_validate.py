@@ -323,6 +323,12 @@ def deep_validate_task(task_id, examples, ground_truth=None, use_llm=True):
 
     if use_llm and examples and ground_truth:
         semantic = semantic_check(task_id, examples, ground_truth)
+        if semantic.get("skipped"):
+            print(f"  LLM SKIPPED for {task_id}: {semantic.get('reason', '?')}")
+    elif use_llm and not ground_truth and examples:
+        print(f"  LLM SKIPPED for {task_id}: no ground truth loaded")
+    elif use_llm and not examples:
+        pass  # no data, nothing to check
 
     all_issues = statistical["issues"][:]
     if semantic.get("issues"):
