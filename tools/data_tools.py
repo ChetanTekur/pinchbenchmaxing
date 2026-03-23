@@ -197,7 +197,9 @@ def generate_data(args: dict, cfg, state) -> dict:
         if not tasks:
             return {"status": "error", "error": "No valid task IDs (must start with 'task_')"}
 
-        script = str(_PROJECT_ROOT / "datagen" / "targeted_topup.py")
+        # Use dynamic_gen (reads from PinchBench .md files) instead of
+        # targeted_topup (hardcoded task definitions)
+        script = str(_PROJECT_ROOT / "datagen" / "dynamic_gen.py")
         generated = {}
         total_generated = 0
 
