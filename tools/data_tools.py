@@ -189,9 +189,17 @@ def generate_data(args: dict, cfg, state) -> dict:
         if not tasks:
             return {"status": "error", "error": "No tasks specified"}
 
+        # Guard: if Claude passes a string instead of list, fix it
+        if isinstance(tasks, str):
+            tasks = [t.strip() for t in tasks.split(",") if t.strip()]
+        # Guard: validate task IDs look correct
+        tasks = [t for t in tasks if t.startswith("task_")]
+        if not tasks:
+            return {"status": "error", "error": "No valid task IDs (must start with 'task_')"}
+
         script = str(_PROJECT_ROOT / "datagen" / "targeted_topup.py")
         generated = {}
-        total = 0
+        total_generated = 0
 
         for task in tasks:
             cmd = [
@@ -203,19 +211,27 @@ def generate_data(args: dict, cfg, state) -> dict:
                 cmd.extend(["--diagnosis-file", str(diagnosis_file)])
 
             rc, output = _run_script(cmd, f"generate:{task}")
-            generated[task] = {"returncode": rc}
-            if rc == 0:
-                total += min_per_task  # approximate
-            elif rc == 2:
+
+            # Parse actual count from output instead of assuming
+            import re
+            actual = 0
+            for line in output.splitlines():
+                m = re.search(r'\+\s*(\d+)', line)
+                if m:
+                    actual += int(m.group(1))
+            generated[task] = {"returncode": rc, "added": actual}
+            total_generated += actual
+
+            if rc == 2:
                 generated[task]["note"] = "no new data needed"
 
         return {
             "status": "success",
             "result": {
-                "generated": total,
+                "generated": total_generated,
                 "per_task": generated,
             },
-            "cost_usd": total * 0.04,  # estimate: $0.04/example via Claude Batch API
+            "cost_usd": total_generated * 0.04,  # actual examples generated
         }
     except Exception as e:
         return {"status": "error", "error": str(e)}
