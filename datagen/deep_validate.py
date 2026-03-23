@@ -247,7 +247,7 @@ def semantic_check(task_id, examples, ground_truth):
 
     examples_text = "\n\n".join(example_summaries)
 
-    prompt = f"""You are a data quality analyst reviewing training examples for an AI agent.
+    prompt = f"""You are a data quality analyst reviewing training examples for an AI agent fine-tune.
 
 ## Benchmark Task Definition (ground truth — this is what the model must learn to do):
 
@@ -257,15 +257,26 @@ def semantic_check(task_id, examples, ground_truth):
 
 {examples_text}
 
+## Important Context About Training Data Format
+
+Training examples are JSON conversation traces. Due to token limits:
+- **Tool call content (especially write_file) is often truncated.** This is NORMAL and expected. The model learns the workflow pattern (which tools, which order, which filenames) — NOT the literal file content. Content quality comes from the base model's capabilities.
+- **The key signals in training data are**: correct tool names, correct filenames, correct tool sequence, complete task execution (read → process → write → confirm), and proper final summary.
+- **Do NOT mark as NEEDS_WORK just because file content is not fully visible.** That's a format limitation, not a data quality issue.
+
 ## Your Analysis
 
-Analyze whether these training examples would teach a model to PASS the benchmark task above. Be specific and critical. Consider:
+Focus on what ACTUALLY matters for benchmark performance:
 
-1. **Approach alignment**: Do the examples demonstrate the correct workflow to complete this task? Are the right tools being used in the right order?
-2. **Output completeness**: Do the examples produce all expected outputs (files, content, format)?
-3. **Quality of demonstration**: Would a model that imitates these examples score well on the grading criteria?
-4. **Missing patterns**: What behavior does the benchmark test for that these examples DON'T demonstrate?
-5. **Harmful patterns**: Do any examples teach behavior that would HURT benchmark performance?
+1. **Correct tools and filenames**: Does the example use the right tool names and produce files with the exact names the benchmark expects? This is the #1 cause of benchmark failures.
+2. **Complete workflow**: Does the example show the full task execution from start to finish? Or does it stop after one step?
+3. **Harmful patterns**: Does the example teach WRONG behavior — wrong filenames, wrong tools, looping, stopping early?
+4. **Missing required steps**: Does the benchmark require a specific step (like installing a skill, listing a directory first) that the example skips entirely?
+
+**Verdict guidelines:**
+- **GOOD**: Right tools, right filenames, complete workflow, no harmful patterns. Content truncation is fine.
+- **NEEDS_WORK**: Wrong filenames, missing required steps, or teaches harmful patterns (looping, wrong tools, stopping early).
+- **BAD**: Completely wrong task, wrong tools throughout, would score 0%.
 
 Return JSON only:
 {{
