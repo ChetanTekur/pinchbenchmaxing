@@ -557,6 +557,8 @@ def _pilot_generate(task_id: str, task_def: dict, client, diagnosis: dict | None
     variation = VARIATION_CONFIGS[0]
     epc = min(3, _epc(task_id) * 3)
     refinement_feedback = ""
+    verdict = "FAILED"
+    parsed = []
 
     for attempt in range(1, max_attempts + 1):
         print(f"\n    Pilot attempt {attempt}/{max_attempts} for {task_id}...")
