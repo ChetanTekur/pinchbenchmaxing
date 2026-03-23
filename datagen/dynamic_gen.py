@@ -508,23 +508,59 @@ def cmd_collect():
     return total_train + total_val
 
 
+def _pilot_batch(task_id: str, task_def: dict, client, prompt: str) -> list:
+    """Submit a small pilot batch (1 request → 3 examples), wait, return parsed examples."""
+    max_tok = 16000 if task_id in HARD_TASKS else 8192
+    custom_id = f"pilot__{task_id}__attempt"
+
+    batch = client.messages.batches.create(requests=[{
+        "custom_id": custom_id,
+        "params": {
+            "model": MODEL,
+            "max_tokens": max_tok,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+    }])
+
+    # Poll until done
+    while True:
+        status = client.messages.batches.retrieve(batch.id)
+        if status.processing_status == "ended":
+            break
+        time.sleep(30)
+
+    # Collect result
+    parsed = []
+    for result in client.messages.batches.results(batch.id):
+        if result.result.type == "errored":
+            print(f"    ⚠ Pilot batch errored")
+            return []
+        raw_text = result.result.message.content[0].text if result.result.message.content else ""
+        examples = extract_json_array(raw_text)
+        if examples:
+            for ex in examples:
+                p = parse_example(ex, task_id)
+                if p:
+                    p["source"] = "dynamic_pilot"
+                    parsed.append(p)
+    return parsed
+
+
 def _pilot_generate(task_id: str, task_def: dict, client, diagnosis: dict | None = None,
                      max_attempts: int = 3) -> tuple[str, list]:
-    """Generate 3 pilot examples, validate, refine prompt if needed.
+    """Generate 3 pilot examples via batch API, validate, refine prompt if needed.
 
     Returns (final_verdict, validated_examples) after up to max_attempts iterations.
-    Uses real-time API for fast feedback (not batch).
     """
     from datagen.deep_validate import semantic_check
 
-    variation = VARIATION_CONFIGS[0]  # Use the standard variation for pilot
-    epc = min(3, _epc(task_id) * 3)  # 3 examples for pilot
+    variation = VARIATION_CONFIGS[0]
+    epc = min(3, _epc(task_id) * 3)
     refinement_feedback = ""
 
     for attempt in range(1, max_attempts + 1):
         print(f"\n    Pilot attempt {attempt}/{max_attempts} for {task_id}...")
 
-        # Build prompt (with refinement feedback if not first attempt)
         prompt = build_dynamic_meta_prompt(task_id, task_def, variation, epc, diagnosis=diagnosis)
         if refinement_feedback:
             prompt += f"""
@@ -535,33 +571,11 @@ def _pilot_generate(task_id: str, task_def: dict, client, diagnosis: dict | None
 Generate improved examples that address ALL the issues above.
 """
 
-        # Call Claude real-time (not batch) for fast feedback
-        max_tok = 16000 if task_id in HARD_TASKS else 8192
-        resp = client.messages.create(
-            model=MODEL,
-            max_tokens=max_tok,
-            messages=[{"role": "user", "content": prompt}],
-        )
-
-        raw_text = resp.content[0].text.strip()
-        examples = extract_json_array(raw_text)
-
-        if not examples:
-            print(f"    ⚠ Parse failure — no valid JSON array")
-            refinement_feedback = "The response was not valid JSON. Return ONLY a JSON array."
-            continue
-
-        # Parse into training format
-        parsed = []
-        for ex in examples:
-            p = parse_example(ex, task_id)
-            if p:
-                p["source"] = "dynamic_pilot"
-                parsed.append(p)
+        parsed = _pilot_batch(task_id, task_def, client, prompt)
 
         if not parsed:
-            print(f"    ⚠ No valid examples after parsing")
-            refinement_feedback = "Examples could not be parsed. Ensure each has user_message and turns."
+            print(f"    ⚠ No valid examples from pilot batch")
+            refinement_feedback = "No valid examples were produced. Ensure output is a valid JSON array with user_message and turns fields."
             continue
 
         print(f"    Generated {len(parsed)} examples, validating...")
@@ -613,49 +627,136 @@ def cmd_run(
     min_per_task: int = 0,
     diagnosis_file: str | None = None,
 ):
-    """Submit batch → poll → collect → validate.
+    """Pilot-validate-refine → bulk generate for each task.
 
-    Uses batch API for all generation (reliable, no rate limits).
-    After collection, runs deep_validate on the new data.
+    All API calls use batch API (reliable, no rate limits).
+
+    For each task:
+    1. Submit small pilot batch (3 examples)
+    2. Deep validate against ground truth
+    3. If NEEDS_WORK: refine prompt, retry pilot (up to 3 attempts)
+    4. If GOOD: submit bulk batch for remaining examples
+    5. If BAD after 3 attempts: skip task
     """
-    cmd_submit(
-        only_tasks=only_tasks,
-        all_below=all_below,
-        min_per_task=min_per_task,
-        diagnosis_file=diagnosis_file,
-    )
-
     api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        print("ERROR: ANTHROPIC_API_KEY not set")
+        sys.exit(1)
+
     client = anthropic.Anthropic(api_key=api_key)
-    batch_id = BATCH_FILE.read_text().strip()
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("\nPolling every 2 minutes...")
-    while True:
-        batch = client.messages.batches.retrieve(batch_id)
-        counts = batch.request_counts
-        ts = time.strftime("%H:%M")
-        print(f"  [{ts}] processing={counts.processing} "
-              f"succeeded={counts.succeeded} errored={counts.errored}")
-        if batch.processing_status == "ended":
-            break
-        time.sleep(120)
+    tasks = resolve_tasks(only_tasks=only_tasks, all_below=all_below)
+    if not tasks:
+        print("No tasks to generate for.")
+        return
 
-    total = cmd_collect()
+    diagnosis = {}
+    if diagnosis_file and Path(diagnosis_file).exists():
+        diagnosis = json.loads(Path(diagnosis_file).read_text())
 
-    # Post-collection validation
-    if total > 0:
-        print(f"\n{'='*60}")
-        print(f"  POST-GENERATION VALIDATION")
-        print(f"{'='*60}")
-        from datagen.validate_data import run_validation
-        report = run_validation(fix=False)
-        critical = report.get("critical_high", 0)
-        if critical > 0:
-            print(f"\n  ⚠ {critical} critical/high issues found in data")
-            print(f"  Run: python3 -m datagen.validate_data --fix")
+    deficits = compute_dynamic_deficits(tasks, min_per_task=min_per_task)
+    if not deficits:
+        print("All tasks at or above target.")
+        return
+
+    print(f"\n{'='*60}")
+    print(f"  DYNAMIC GENERATION — PILOT → VALIDATE → BULK")
+    print(f"{'='*60}")
+    print(f"  Tasks: {len(deficits)}")
+    print(f"  Target: {TARGET_PER_TASK}")
+
+    # Phase 1: Pilot each task
+    pilot_results = {}
+    bulk_tasks = {}
+
+    for task_id, needed in deficits.items():
+        task_def = tasks[task_id]
+        task_diag = diagnosis.get(task_id)
+
+        print(f"\n{'─'*60}")
+        print(f"  {task_id} — need {needed} examples")
+        print(f"  Ground truth: {task_def.get('name', '?')}")
+
+        verdict, pilot_examples = _pilot_generate(
+            task_id, task_def, client, diagnosis=task_diag
+        )
+        pilot_results[task_id] = {"verdict": verdict, "n_pilot": len(pilot_examples)}
+
+        if verdict in ("GOOD", "NEEDS_WORK", "UNVERIFIED"):
+            for ex in pilot_examples:
+                with open(TRAIN_FILE, "a") as f:
+                    f.write(json.dumps(ex) + "\n")
+            print(f"    Saved {len(pilot_examples)} pilot examples")
+
+            remaining = needed - len(pilot_examples)
+            if remaining > 0:
+                bulk_tasks[task_id] = {"task_def": task_def, "needed": remaining,
+                                       "diagnosis": task_diag}
         else:
-            print(f"\n  ✓ No critical issues. Data ready for deep validation.")
-            print(f"  Run: python3 -m datagen.deep_validate")
+            print(f"    ⚠ SKIPPING bulk — pilot quality too low")
+
+    # Phase 2: Bulk generate (single batch for all passing tasks)
+    if bulk_tasks:
+        print(f"\n{'='*60}")
+        print(f"  BULK GENERATION — {len(bulk_tasks)} tasks")
+        print(f"{'='*60}")
+
+        requests = []
+        for task_id, info in bulk_tasks.items():
+            task_def = info["task_def"]
+            needed = info["needed"]
+            task_diag = info["diagnosis"]
+            epc = _epc(task_id)
+            n_calls = (needed + epc - 1) // epc
+            max_tok = 16000 if task_id in HARD_TASKS else 8192
+
+            for i in range(n_calls):
+                variation = VARIATION_CONFIGS[i % len(VARIATION_CONFIGS)]
+                custom_id = f"dynamic__{task_id}__{variation['id']}__{i:03d}"
+                prompt = build_dynamic_meta_prompt(
+                    task_id, task_def, variation, epc, diagnosis=task_diag
+                )
+                requests.append({
+                    "custom_id": custom_id,
+                    "params": {
+                        "model": MODEL,
+                        "max_tokens": max_tok,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                })
+
+        if requests:
+            batch = client.messages.batches.create(requests=requests)
+            BATCH_FILE.write_text(batch.id)
+
+            total_est = sum(_epc(r["custom_id"].split("__")[1]) for r in requests)
+            print(f"  Submitted {len(requests)} requests → ~{total_est} examples")
+            print(f"  Batch ID: {batch.id}")
+
+            print("\n  Polling every 2 minutes...")
+            while True:
+                batch = client.messages.batches.retrieve(batch.id)
+                counts = batch.request_counts
+                ts = time.strftime("%H:%M")
+                print(f"  [{ts}] processing={counts.processing} "
+                      f"succeeded={counts.succeeded} errored={counts.errored}")
+                if batch.processing_status == "ended":
+                    break
+                time.sleep(120)
+
+            cmd_collect()
+
+    # Summary
+    print(f"\n{'='*60}")
+    print(f"  GENERATION SUMMARY")
+    print(f"{'='*60}")
+    for task_id, info in pilot_results.items():
+        status = "pilot+bulk" if task_id in bulk_tasks else "pilot only"
+        if info["verdict"] == "BAD":
+            status = "SKIPPED"
+        print(f"  {task_id:<35} {info['verdict']:<12} {status}")
+    print()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
