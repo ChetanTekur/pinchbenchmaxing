@@ -457,6 +457,44 @@ def run_validation(task_filter: str | None = None, verbose: bool = False,
     report_file = _cfg.data_dir / "validation_report.json"
     report_file.write_text(json.dumps(report, indent=2))
     print(f"\n  Report saved: {report_file}")
+
+    # ── Save bad examples detail report ───────────────────────────────────
+    # Shows actual tool calls for each bad example so you can see what's wrong
+
+    bad_detail = []
+    for idx, task_id, issues in all_issues:
+        has_critical = any(iss["severity"] in ("critical", "high") for iss in issues)
+        if not has_critical:
+            continue
+
+        ex = examples[idx]
+        msgs = ex.get("messages", [])
+        user_msg = next((m["content"] for m in msgs if m.get("role") == "user"), "?")
+
+        # Extract tool calls
+        tool_calls = []
+        for msg in msgs:
+            if msg.get("role") == "assistant":
+                for block in re.findall(r'<tool_call>(.*?)</tool_call>', msg["content"], re.DOTALL):
+                    try:
+                        obj = json.loads(block.strip())
+                        tool_calls.append({
+                            "name": obj.get("name", "?"),
+                            "args": list(obj.get("arguments", {}).keys()),
+                        })
+                    except json.JSONDecodeError:
+                        tool_calls.append({"name": "PARSE_ERROR", "raw": block[:100]})
+
+        bad_detail.append({
+            "task_id": task_id,
+            "user_message": user_msg[:200],
+            "issues": [{"severity": i["severity"], "check": i["check"], "detail": i["detail"]} for i in issues],
+            "tool_calls": tool_calls,
+        })
+
+    bad_report_file = _cfg.data_dir / "bad_examples_report.json"
+    bad_report_file.write_text(json.dumps(bad_detail, indent=2))
+    print(f"  Bad examples: {bad_report_file} ({len(bad_detail)} examples)")
     print(f"{'='*70}\n")
 
     return report
