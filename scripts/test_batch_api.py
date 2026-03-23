@@ -10,7 +10,7 @@ print("Submitting test batch...")
 batch = client.messages.batches.create(requests=[{
     "custom_id": "test_hello",
     "params": {
-        "model": "claude-sonnet-4-5",
+        "model": "claude-sonnet-4-6",
         "max_tokens": 100,
         "messages": [{"role": "user", "content": "Say hello in one word."}],
     },
