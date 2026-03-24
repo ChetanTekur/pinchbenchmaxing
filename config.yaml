@@ -21,14 +21,14 @@ data:
   min_judge_score: 3          # filter examples below this quality score (1-5)
 
 training:
-  epochs: 2                   # was 3 — less forgetting with small dataset
+  epochs: 3                   # v8 baseline config
   batch_size: 2
   grad_accum: 4               # effective batch = batch_size * grad_accum
-  learning_rate: 1e-4         # was 2e-4 — gentler updates, less forgetting
-  lora_r: 32                  # was 16 — more capacity for 23 diverse tasks
-  lora_alpha: 32              # ratio 1:1 (was 2:1) — more stable scaling
-  lora_dropout: 0.0           # was 0.05 — low rank itself regularizes
-  max_seq_len: 8192            # was 4096 — long tasks (email triage, market research) need 6K-8K tokens
+  learning_rate: 2e-4         # v8 baseline config
+  lora_r: 16                  # v8 baseline config
+  lora_alpha: 32              # v8 baseline config
+  lora_dropout: 0.05          # v8 baseline config
+  max_seq_len: 4096           # v8 baseline config
   warmup_ratio: 0.05
   lr_scheduler: cosine
   weight_decay: 0.01
