@@ -58,6 +58,7 @@ HARD_TASKS = {
     "task_16_email_triage",
     "task_17_email_search",
     "task_18_market_research",
+    "task_19_spreadsheet_summary",  # Python code + CSV/Excel data = long examples
     "task_21_openclaw_comprehension",
 }
 
