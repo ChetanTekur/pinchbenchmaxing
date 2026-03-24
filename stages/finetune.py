@@ -120,19 +120,17 @@ def main():
         return
 
     def format_example(example):
-        try:
-            text = tokenizer.apply_chat_template(
-                example["messages"],
-                tokenize=False,
-                add_generation_prompt=False,
-                enable_thinking=False,
-            )
-        except TypeError:
-            text = tokenizer.apply_chat_template(
-                example["messages"],
-                tokenize=False,
-                add_generation_prompt=False,
-            )
+        import re
+        text = tokenizer.apply_chat_template(
+            example["messages"],
+            tokenize=False,
+            add_generation_prompt=False,
+            enable_thinking=False,
+        )
+        # CRITICAL: Qwen3.5 tokenizer ALWAYS inserts <think>...</think> tokens
+        # regardless of enable_thinking=False. Strip them so the model learns
+        # to respond directly without thinking first.
+        text = re.sub(r'<think>\s*</think>\s*', '', text)
         return {"text": text}
 
     train_dataset = train_dataset.map(format_example, remove_columns=["messages"])
