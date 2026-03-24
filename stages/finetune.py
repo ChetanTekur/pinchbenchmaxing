@@ -119,17 +119,21 @@ def main():
         return
 
     def format_example(example):
-        import re
-        text = tokenizer.apply_chat_template(
-            example["messages"],
-            tokenize=False,
-            add_generation_prompt=False,
-            enable_thinking=False,
-        )
-        # CRITICAL: Qwen3.5 tokenizer ALWAYS inserts <think>...</think> tokens
-        # regardless of enable_thinking=False. Strip them so the model learns
-        # to respond directly without thinking first.
-        text = re.sub(r'<think>\s*</think>\s*', '', text)
+        try:
+            text = tokenizer.apply_chat_template(
+                example["messages"],
+                tokenize=False,
+                add_generation_prompt=False,
+                enable_thinking=False,
+            )
+        except TypeError:
+            text = tokenizer.apply_chat_template(
+                example["messages"],
+                tokenize=False,
+                add_generation_prompt=False,
+            )
+        # NOTE: Qwen3.5 tokenizer inserts <think></think> regardless of
+        # enable_thinking=False. We keep them for now — v8 trained with them.
         return {"text": text}
 
     train_dataset = train_dataset.map(format_example, remove_columns=["messages"])
@@ -150,9 +154,12 @@ def main():
         max_grad_norm               =float(t["max_grad_norm"]),
         logging_steps               =10,
         logging_strategy            ="steps",
-        save_steps                  =50,
-        eval_strategy               ="no",     # eval OOMs on 24GB; train loss is sufficient
+        save_steps                  =100,
+        eval_strategy               ="steps",
+        eval_steps                  =100,
         save_total_limit            =3,
+        load_best_model_at_end      =True,
+        metric_for_best_model       ="eval_loss",
         disable_tqdm                =False,
         bf16                        =True,
         max_seq_length              =t["max_seq_len"],
