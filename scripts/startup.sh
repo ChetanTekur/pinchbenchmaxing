@@ -36,14 +36,22 @@ grep -qxF 'export PATH="$HOME/.local/bin:$HOME/.openclaw/bin:/usr/local/bin:$PAT
     || echo 'export PATH="$HOME/.local/bin:$HOME/.openclaw/bin:/usr/local/bin:$PATH"' >> ~/.bashrc
 
 # ── 0. Move HF cache to network volume (root disk is only 50GB) ────────────
-HF_CACHE="$HOME/.cache/huggingface"
-HF_CACHE_NV="$WORKSPACE/.cache/huggingface"
-if [ ! -L "$HF_CACHE" ]; then
-    echo "=== Moving HuggingFace cache to network volume ==="
-    mkdir -p "$HF_CACHE_NV"
-    rm -rf "$HF_CACHE"
-    ln -s "$HF_CACHE_NV" "$HF_CACHE"
-    echo "  $HF_CACHE → $HF_CACHE_NV"
+# Symlink the hub/ subdirectory (where model weights live, ~18GB) to network
+# volume. We symlink hub/ specifically, not the parent, because other tools
+# (pip, HF tokenizers) recreate ~/.cache/huggingface/ as a real directory.
+HF_HUB="$HOME/.cache/huggingface/hub"
+HF_HUB_NV="$WORKSPACE/.cache/huggingface/hub"
+mkdir -p "$(dirname "$HF_HUB")"
+if [ ! -L "$HF_HUB" ]; then
+    echo "=== Moving HuggingFace hub cache to network volume ==="
+    mkdir -p "$HF_HUB_NV"
+    # Move existing data if present
+    if [ -d "$HF_HUB" ]; then
+        cp -a "$HF_HUB/"* "$HF_HUB_NV/" 2>/dev/null || true
+        rm -rf "$HF_HUB"
+    fi
+    ln -s "$HF_HUB_NV" "$HF_HUB"
+    echo "  $HF_HUB → $HF_HUB_NV"
 fi
 
 # ── 0a. Load persistent env vars (API keys) ──────────────────────────────────
