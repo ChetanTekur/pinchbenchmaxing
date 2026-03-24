@@ -79,12 +79,26 @@ def call_ollama(model, prompt, system_prompt=None):
                 "model": model,
                 "messages": messages,
                 "stream": False,
-                "options": {"num_predict": 2048, "temperature": 0.7},
+                "think": False,  # disable thinking mode
+                "options": {"num_predict": 4096, "temperature": 0.7},
             },
             timeout=120,
         )
         data = resp.json()
-        return data.get("message", {}).get("content", "(no response)")
+        content = data.get("message", {}).get("content", "")
+        thinking = data.get("message", {}).get("thinking", "")
+        if thinking:
+            print(f"  [THINKING MODE DETECTED: {len(thinking)} chars of thinking]")
+            print(f"  Thinking preview: {thinking[:200]}...")
+        if not content:
+            # Dump raw response for debugging
+            print(f"  [RAW RESPONSE KEYS: {list(data.keys())}]")
+            msg = data.get("message", {})
+            print(f"  [MESSAGE KEYS: {list(msg.keys())}]")
+            print(f"  [MESSAGE ROLE: {msg.get('role')}]")
+            print(f"  [CONTENT LENGTH: {len(msg.get('content', ''))}]")
+            return "(no response)"
+        return content
     except Exception as e:
         return f"ERROR: {e}"
 
