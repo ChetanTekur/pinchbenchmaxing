@@ -28,7 +28,7 @@ training:
   lora_r: 32                  # was 16 — more capacity for 23 diverse tasks
   lora_alpha: 32              # ratio 1:1 (was 2:1) — more stable scaling
   lora_dropout: 0.0           # was 0.05 — low rank itself regularizes
-  max_seq_len: 4096
+  max_seq_len: 8192            # was 4096 — long tasks (email triage, market research) need 6K-8K tokens
   warmup_ratio: 0.05
   lr_scheduler: cosine
   weight_decay: 0.01
