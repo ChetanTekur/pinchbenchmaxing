@@ -101,6 +101,7 @@ def main():
         target_modules =["q_proj", "k_proj", "v_proj", "o_proj",
                          "gate_proj", "up_proj", "down_proj"],
         bias           ="none",
+        use_rslora     =True,      # rank-stabilized scaling: alpha/sqrt(r) instead of alpha/r
         use_gradient_checkpointing="unsloth",
         random_state   =42,
     )
