@@ -155,7 +155,7 @@ def main():
         save_steps                  =50,
         eval_strategy               ="no",     # eval OOMs on 24GB; train loss is sufficient
         save_total_limit            =3,
-        disable_tqdm                =True,     # tqdm \r overwrites loss lines in captured output
+        disable_tqdm                =False,
         bf16                        =True,
         max_seq_length              =t["max_seq_len"],
         dataset_text_field          ="text",
