@@ -33,7 +33,20 @@ Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch):
 | qwen35-9b-clawd-v3 | 16.8 / 23 (73%) | Manual topup |
 | qwen35-9b-clawd-v5 | 15.0 / 23 (65%) | First agentic pipeline run |
 | qwen35-9b-clawd-v6 | 16.6 / 23 (72%) | Score-proportional data gen |
-| qwen35-9b-clawd-v7 | 14.8 / 23 (64%) | Regression — dataset imbalance (fixed) |
+| qwen35-9b-clawd-v7 | 14.8 / 23 (64%) | Regression — dataset imbalance |
+| qwen35-9b-clawd-v8 | 14.0 / 23 (61%) | Best with old pipeline |
+| qwen35-9b-clawd-v9 | 5.6 / 23 (24%) | Regression — bad data (3 wrong task definitions) |
+| qwen35-9b-clawd-v10 | 6.4 / 23 (28%) | Still bad data + wrong validator rules |
+| qwen35-9b-clawd-v11 | *training...* | Clean data, correct task defs, dynamic gen |
+
+### Key Lesson: Bad Data Is Worse Than No Data
+
+v9/v10 regressed catastrophically because:
+1. **3 tasks had completely wrong definitions** — task_11 trained "config update" but benchmark tests "create project structure"; task_12 trained "skill search" but benchmark tests "search and replace in files"
+2. **Validator was rejecting correct data** — REQUIRED_TOOLS didn't match what the benchmark actually tests (e.g. requiring `search_emails` for tasks that use `list_files` + `read_file`)
+3. **311 training examples had wrong tool names** — model literally learned to call wrong tools
+
+The fix: dynamic data generation that reads task definitions from the actual PinchBench `.md` files (no hardcoded copies), deep validation with Claude semantic checks, and a pilot-validate-refine flow.
 
 Dataset: [huggingface.co/datasets/cptekur/pinchbench-clawd](https://huggingface.co/datasets/cptekur/pinchbench-clawd) (CC BY 4.0)
 
@@ -98,15 +111,38 @@ Each template uses `{variable}` placeholders filled from `config.yaml` at runtim
 
 **To change the orchestrator's behavior, edit the markdown.** Add a guardrail, change a priority, adjust a scenario — no code changes, no redeployment. Just edit `prompts/orchestrator.md` and restart.
 
-### Two Layers of Reasoning
+### Three Layers of Reasoning
 
-The orchestrator itself makes lightweight decisions ("dataset is imbalanced → rebalance before training"). For deeper analysis, it delegates to **specialist reasoning tools** that call Claude internally:
+**Layer 1: Orchestrator decisions** — lightweight ("dataset is imbalanced → rebalance before training"). Guided by `prompts/orchestrator.md` which includes a post-benchmark decision framework: when to LEAVE data alone, when to FIX, when to REGENERATE, when to just TRAIN AND SEE.
 
-**`diagnose`** — receives benchmark scores, dataset stats, training logs, and benchmark error output. Claude reasons about *why* tasks are failing: schema mismatches, data quality issues, coverage gaps, regressions. Returns structured JSON with ranked root causes and recommended fixes.
+**Layer 2: Specialist analysis** — the orchestrator delegates to reasoning tools that call Claude:
 
-**`plan_strategy`** — receives the diagnosis + dataset state. Claude produces a specific data generation plan: which tasks need examples, how many (score-proportional with caps), which variation types to weight (error_recovery, multi_tool_chain), and which tasks need adversarial examples from benchmark transcripts.
+- **`diagnose`** — receives benchmark scores, dataset stats, **bad examples report** (actual tool calls vs expected), and **validator expectations** (TOOL_SIGNATURES, REQUIRED_TOOLS). Claude performs a **three-way comparison**: what the benchmark expects vs what the training data teaches vs what the validator enforces. Can identify when the validator is wrong, not just the data.
+- **`plan_strategy`** — receives the diagnosis + dataset state. Produces a targeted data generation plan.
 
-These are the tools where Claude reasons about the problem. Everything else is execution.
+**Layer 3: Deep validation** — Claude reasons about whether training examples would actually teach the model to pass the benchmark (`datagen/deep_validate.py`). Checks structural quality (tool names, args), statistical patterns (diversity, completeness), and semantic alignment (does this example teach correct behavior?).
+
+### Dynamic Data Generation
+
+Data generation reads task definitions directly from PinchBench `.md` files (`datagen/task_loader.py`) — no hardcoded copies that can drift. The meta-prompt includes:
+- The full benchmark task definition (ground truth)
+- The OPENCLAW_SYSTEM prompt (available tools)
+- Variation configs for diversity
+- Optional diagnosis context for targeted fixes
+
+**Pilot-validate-refine flow** (`datagen/dynamic_gen.py`):
+1. Generate 3 pilot examples via batch API
+2. Deep validate against ground truth
+3. If NEEDS_WORK: feed issues back, refine prompt, retry (up to 3 attempts)
+4. If GOOD: bulk generate remaining examples
+5. If BAD after 3 attempts: skip task and report
+
+### Hard Training Gates
+
+The `train` tool has 3 hardcoded gates that cannot be bypassed:
+1. **Coverage**: all 23 tasks must have ≥30 examples
+2. **Quality**: `validate_data` must show 0 critical/high issues
+3. **Disk**: root filesystem must have ≥15 GB free
 
 ### Example Session
 
@@ -285,45 +321,23 @@ paths:
   workspace: ${PBM_WORKSPACE:-./workspace}
 
 data:
-  examples_per_task: 70
+  examples_per_task: 50
+  min_per_task: 30          # hard gate: train blocked below this
   val_split: 0.1
   min_judge_score: 3
 
 training:
   epochs: 3
-  batch_size: 2
-  grad_accum: 4
+  batch_size: 2             # auto-tuned based on GPU VRAM after model load
   learning_rate: 2e-4
   lora_r: 16
   lora_alpha: 32
   max_seq_len: 4096
 
-convert:
-  quantization: q4_k_m
-
-claude:
-  generation: claude-sonnet-4-5
-  judge: claude-sonnet-4-5
-  analysis: claude-sonnet-4-6
-
 orchestrator:
   model: claude-sonnet-4-6
-  max_actions: 20
-  budget_usd: 25
-  gpu_rate_per_hour: 3.60
-  auto_pause:
-    score_regression_pct: 10
-    min_dataset_size: 500
-    min_disk_gb: 10
-    max_consecutive_failures: 3
-
-loop:
-  max_iterations: 5
-  target_score: 0.85
-  weak_task_threshold: 0.50
-  max_new_per_task: 50
-  max_total_per_task: 120
-  total_new_examples_cap: 300
+  max_actions: 200          # budget is the real limit
+  budget_usd: 75
 
 huggingface:
   dataset_repo: cptekur/pinchbench-clawd
@@ -367,16 +381,19 @@ stages/                      # training pipeline stages
   probe.py                   # interactive model testing
 
 datagen/                     # data generation and curation scripts
-  generate.py                # initial data via Claude Batch API
-  topup.py                   # plain topup (round-robin fallback)
-  targeted_topup.py          # diagnosis-aware topup
+  dynamic_gen.py             # dynamic generation from PinchBench .md files (primary)
+  task_loader.py             # loads task definitions from benchmark .md files
+  deep_validate.py           # 3-level validation: structural + statistical + semantic (Claude)
+  validate_data.py           # structural validation (tool names, args, schemas)
+  generate.py                # initial data via Claude Batch API (legacy)
+  topup.py                   # task definitions + variation configs
+  targeted_topup.py          # diagnosis-aware topup (legacy — use dynamic_gen)
   adversarial_gen.py         # generate from benchmark failure transcripts
   llm_judge.py               # score examples 1-5 with Claude
   example_repair.py          # repair borderline examples
   dedup.py                   # semantic deduplication
   rebalance.py               # trim overweight tasks
-  inspect_data.py            # dataset stats and validation
-  analyze_dataset.py         # dataset health analysis
+  inspect_data.py            # dataset stats, diversity analysis, validation
 
 scripts/                     # shell scripts
   startup.sh                 # every-session: start Ollama + OpenClaw
@@ -424,16 +441,16 @@ python3 orchestrator.py status
 
 ## Key Insights
 
-1. **Always run in tmux** — training takes hours, SSH disconnects kill the process
-2. **OpenRouter is required for benchmarking** — PinchBench judge uses OpenRouter, not Anthropic API
-3. **GGUF models need `register_model.sh`** — plain `ollama create` breaks tool calling
-4. **`~/.ollama` is ephemeral** — `startup.sh` re-registers models from `loop_state.json`
-5. **`source` env files, never `sh`** — `sh` runs in a subshell, exports nothing
-6. **Dataset balance matters** — overweight tasks cause catastrophic forgetting (v7 lesson)
-7. **Snapshot before destructive ops** — filter/dedup/rebalance delete examples
-8. **Model checkpoints are versioned** — `qwen35-9b-clawd-v8_merged/` etc.
-9. **All prompts are in `prompts/*.md`** — edit behavior without touching code
-10. **`--dry-run` tests orchestrator decisions** — Claude decides but tools don't execute
+1. **Bad data is worse than no data** — wrong tool names, wrong filenames, or wrong task definitions actively destroy model capabilities
+2. **Always deep validate before training** — `python -m datagen.deep_validate` catches semantic issues that structural validation misses
+3. **Task definitions must match the benchmark** — use `task_loader.py` to read from PinchBench `.md` files, never hardcode
+4. **Pilot before bulk generating** — generate 3 examples, validate, refine prompt, then bulk
+5. **Always run in tmux** — training takes hours, SSH disconnects kill the process
+6. **OpenRouter is required for benchmarking** — PinchBench judge uses OpenRouter, not Anthropic API
+7. **Symlink `~/.cache/huggingface/hub` to network volume** — root disk is only 50GB, model weights eat 18GB
+8. **`source` env files, never `sh`** — `sh` runs in a subshell, exports nothing
+9. **Snapshot before destructive ops** — filter/dedup/rebalance delete examples
+10. **All prompts are in `prompts/*.md`** — edit behavior without touching code
 
 ---
 
@@ -452,8 +469,8 @@ python3 orchestrator.py status
 | task_08 | memory | none |
 | task_09 | files | none |
 | task_10 | workflow | none |
-| task_11 | config_update | none |
-| task_12 | skill_search | none |
+| task_11 | create project structure (datautils) | none |
+| task_12 | search and replace in files | none |
 | task_13 | image_gen | OpenRouter |
 | task_14 | humanizer | none |
 | task_15 | daily_summary | none |
