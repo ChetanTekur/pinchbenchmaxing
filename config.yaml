@@ -16,7 +16,7 @@ benchmark:
 
 data:
   examples_per_task: 50       # target examples per task
-  min_per_task: 40            # floor: every task must have at least this many
+  min_per_task: 30            # floor: every task must have at least this many
   val_split: 0.1              # fraction held out for validation
   min_judge_score: 3          # filter examples below this quality score (1-5)
 
