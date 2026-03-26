@@ -28,7 +28,7 @@ training:
   lora_r: 16                  # v8 baseline config
   lora_alpha: 32              # v8 baseline config
   lora_dropout: 0.05          # v8 baseline config
-  max_seq_len: 4096           # v8 baseline config
+  max_seq_len: 8192            # long multi-step tasks need 6-8K tokens
   warmup_ratio: 0.05
   lr_scheduler: cosine
   weight_decay: 0.01
