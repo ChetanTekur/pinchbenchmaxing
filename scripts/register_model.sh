@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Register a fine-tuned GGUF model in Ollama with correct chat template and tool support
 #
+# Uses the FULL explicit Qwen3 chat template with tool calling support.
+# DO NOT use RENDERER/PARSER shortcuts — they break tool calling for fine-tuned models.
+#
 # Usage:
 #   bash register_model.sh              # uses config defaults (unversioned)
 #   bash register_model.sh v9           # registers version 9
 #   bash register_model.sh v9 my-model  # version 9 with custom ollama name
 #
-# Override values with env vars: GGUF_PATH, OLLAMA_MODEL, PBM_MODEL_NAME, BASE_OLLAMA_MODEL.
+# Override values with env vars: GGUF_PATH, OLLAMA_MODEL, PBM_MODEL_NAME.
 
 set -euo pipefail
 
@@ -27,27 +30,6 @@ fi
 GGUF_PATH="${GGUF_PATH:-$(python3 -c "from utils.config import load_config; print(load_config().gguf_file)")}"
 MODEL_NAME="${OLLAMA_MODEL:-${2:-$(python3 -c "from utils.config import load_config; print(load_config().ollama_model_name)")}}"
 
-# Map HuggingFace model names to Ollama base model names for template extraction
-# Override with BASE_OLLAMA_MODEL env var for custom mappings
-if [ -z "${BASE_OLLAMA_MODEL:-}" ]; then
-    HF_BASE=$(python3 -c "from utils.config import load_config; print(load_config().base_model)")
-    case "$HF_BASE" in
-        *gemma-3-1b*)   BASE_OLLAMA_MODEL="gemma3:1b" ;;
-        *gemma-3-4b*)   BASE_OLLAMA_MODEL="gemma3:4b" ;;
-        *gemma-3-12b*)  BASE_OLLAMA_MODEL="gemma3:12b" ;;
-        *gemma-3-27b*)  BASE_OLLAMA_MODEL="gemma3:27b" ;;
-        *Qwen3.5-9B*)   BASE_OLLAMA_MODEL="qwen3.5:9b" ;;
-        *Qwen3-8B*)     BASE_OLLAMA_MODEL="qwen3:8b" ;;
-        *Mistral-7B*)   BASE_OLLAMA_MODEL="mistral:7b" ;;
-        *Llama-3*)      BASE_OLLAMA_MODEL="llama3:8b" ;;
-        *Phi-3*)        BASE_OLLAMA_MODEL="phi3:mini" ;;
-        *)
-            echo "WARNING: Unknown base model '$HF_BASE' — defaulting to generic Modelfile"
-            BASE_OLLAMA_MODEL=""
-            ;;
-    esac
-fi
-
 MODELFILE="/tmp/Modelfile-clawd"
 
 if [ ! -f "$GGUF_PATH" ]; then
@@ -56,49 +38,88 @@ if [ ! -f "$GGUF_PATH" ]; then
     exit 1
 fi
 
-echo "GGUF:       $GGUF_PATH"
-echo "Model:      $MODEL_NAME"
-echo "Base model: ${BASE_OLLAMA_MODEL:-generic}"
+echo "GGUF:  $GGUF_PATH"
+echo "Model: $MODEL_NAME"
 
-# ── Build Modelfile ───────────────────────────────────────────────────────────
+# ── Build Modelfile with FULL explicit template ──────────────────────────────
+# CRITICAL: Do NOT use "TEMPLATE {{ .Prompt }}" + "RENDERER qwen3.5" — this
+# breaks tool calling for fine-tuned models. The explicit template below is
+# what produced 64-73% scores. The RENDERER shortcut produced 25%.
 
-if [ -n "$BASE_OLLAMA_MODEL" ]; then
-    # Pull base model if not already present (needed for template extraction)
-    if ! ollama list 2>/dev/null | grep -q "^${BASE_OLLAMA_MODEL}"; then
-        echo "Pulling base model for template extraction: $BASE_OLLAMA_MODEL"
-        ollama pull "$BASE_OLLAMA_MODEL"
-    fi
+echo "FROM $GGUF_PATH" > "$MODELFILE"
+cat >> "$MODELFILE" << 'EOF'
+TEMPLATE """
+{{- $lastUserIdx := -1 -}}
+{{- range $idx, $msg := .Messages -}}
+{{- if eq $msg.Role "user" }}{{ $lastUserIdx = $idx }}{{ end -}}
+{{- end }}
+{{- if or .System .Tools }}<|im_start|>system
+{{ if .System }}
+{{ .System }}
+{{- end }}
+{{- if .Tools }}
 
-    # Extract template from base model's Modelfile
-    echo "Extracting Modelfile template from $BASE_OLLAMA_MODEL..."
-    BASE_MODELFILE=$(ollama show "$BASE_OLLAMA_MODEL" --modelfile 2>/dev/null || true)
+# Tools
 
-    if [ -z "$BASE_MODELFILE" ]; then
-        echo "ERROR: Could not extract Modelfile from $BASE_OLLAMA_MODEL"
-        exit 1
-    fi
+You may call one or more functions to assist with the user query.
 
-    # Build new Modelfile: replace FROM line, keep everything else
-    echo "FROM $GGUF_PATH" > "$MODELFILE"
+You are provided with function signatures within <tools></tools> XML tags:
+<tools>
+{{- range .Tools }}
+{"type": "function", "function": {{ .Function }}}
+{{- end }}
+</tools>
 
-    # Extract everything after the FROM line from the base modelfile
-    echo "$BASE_MODELFILE" | sed '1,/^FROM /d' >> "$MODELFILE"
+For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
+<tool_call>
+{"name": <function-name>, "arguments": <args-json-object>}
+</tool_call>
+{{- end -}}
+<|im_end|>
+{{ end }}
+{{- range $i, $_ := .Messages }}
+{{- $last := eq (len (slice $.Messages $i)) 1 -}}
+{{- if eq .Role "user" }}<|im_start|>user
+{{ .Content }}
+{{- if and $.IsThinkSet (eq $i $lastUserIdx) }}
+   {{- if $.Think -}}
+      {{- " "}}/think
+   {{- else -}}
+      {{- " "}}/no_think
+   {{- end -}}
+{{- end }}<|im_end|>
+{{ else if eq .Role "assistant" }}<|im_start|>assistant
+{{ if (and $.IsThinkSet (and .Thinking (or $last (gt $i $lastUserIdx)))) -}}
+<think>{{ .Thinking }}</think>
+{{ end -}}
+{{ if .Content }}{{ .Content }}
+{{- else if .ToolCalls }}<tool_call>
+{{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
+{{ end }}</tool_call>
+{{- end }}{{ if not $last }}<|im_end|>
+{{ end }}
+{{- else if eq .Role "tool" }}<|im_start|>user
+<tool_response>
+{{ .Content }}
+</tool_response><|im_end|>
+{{ end }}
+{{- if and (ne .Role "assistant") $last }}<|im_start|>assistant
+{{ if and $.IsThinkSet (not $.Think) -}}
+<think>
 
-    # Append our system prompt (overrides the base model's)
-    cat >> "$MODELFILE" << 'SYSTEM_EOF'
-SYSTEM """You are Clawd, an autonomous AI agent powered by OpenClaw. You help users accomplish real-world tasks by using tools. Be direct and competent — start with action, not explanation. Get things done."""
-SYSTEM_EOF
+</think>
 
-else
-    # Generic Modelfile — no template extraction available
-    echo "FROM $GGUF_PATH" > "$MODELFILE"
-    cat >> "$MODELFILE" << 'GENERIC_EOF'
-PARAMETER temperature 0.6
+{{ end -}}
+{{ end }}
+{{- end }}"""
 PARAMETER top_k 20
 PARAMETER top_p 0.95
+PARAMETER repeat_penalty 1
+PARAMETER stop <|im_start|>
+PARAMETER stop <|im_end|>
+PARAMETER temperature 0.6
 SYSTEM """You are Clawd, an autonomous AI agent powered by OpenClaw. You help users accomplish real-world tasks by using tools. Be direct and competent — start with action, not explanation. Get things done."""
-GENERIC_EOF
-fi
+EOF
 
 echo ""
 echo "Removing old model..."
