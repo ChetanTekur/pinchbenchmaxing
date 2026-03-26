@@ -22,13 +22,13 @@ def load_jsonl(path: Path) -> list[dict]:
     return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
 
 
-def auto_batch_size(config_batch: int) -> tuple[int, int]:
+def auto_batch_size(config_batch: int, max_seq_len: int = 4096) -> tuple[int, int]:
     """
     Calculate batch size based on ACTUAL free GPU VRAM after model loading.
 
     Called AFTER model is loaded so we measure real free VRAM, not a guess.
+    Scales memory per batch item with seq_len (longer sequences use more VRAM).
     Targets effective batch ~32 via grad_accum.
-    ~2 GB per batch item for 9B 4-bit LoRA (activations + grad buffers).
     """
     try:
         import torch
@@ -38,10 +38,12 @@ def auto_batch_size(config_batch: int) -> tuple[int, int]:
             reserved = torch.cuda.memory_reserved(0) / (1024**3)
             free_vram = total_vram - reserved
 
-            # ~2 GB per batch item for 4-bit LoRA (measured empirically)
+            # Memory per batch item scales with seq_len:
+            # ~2 GB at 4096, ~4 GB at 8192, ~8 GB at 16384
+            gb_per_item = 2.0 * (max_seq_len / 4096)
             # Use 70% of free VRAM to leave headroom for optimizer states
             usable_vram = free_vram * 0.7
-            max_batch = max(2, int(usable_vram / 2))
+            max_batch = max(1, int(usable_vram / gb_per_item))
             # Cap at 16 — beyond this, offloading kicks in on most GPUs
             batch_size = min(max_batch, 16)
             # Adjust grad_accum to keep effective batch ~32
@@ -51,6 +53,7 @@ def auto_batch_size(config_batch: int) -> tuple[int, int]:
             print(f"GPU        : {torch.cuda.get_device_name(0)}")
             print(f"VRAM       : {total_vram:.0f} GB total, {allocated:.1f} GB allocated, "
                   f"{free_vram:.0f} GB free")
+            print(f"Seq len    : {max_seq_len} → {gb_per_item:.1f} GB/item")
             print(f"Batch size : {config_batch} (config) → {batch_size} (auto)")
             print(f"Grad accum : {grad_accum} (effective batch = {batch_size * grad_accum})")
             return batch_size, grad_accum
@@ -107,7 +110,7 @@ def main():
     model.print_trainable_parameters()
 
     # Auto batch size AFTER model loaded — measures actual free VRAM
-    batch_size, grad_accum = auto_batch_size(int(t["batch_size"]))
+    batch_size, grad_accum = auto_batch_size(int(t["batch_size"]), max_seq_len=int(t["max_seq_len"]))
 
     train_dataset = Dataset.from_list(load_jsonl(cfg.train_sft_file))
     val_dataset   = Dataset.from_list(load_jsonl(cfg.val_sft_file))
