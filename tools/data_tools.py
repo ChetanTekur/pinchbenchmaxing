@@ -201,27 +201,35 @@ def generate_data(args: dict, cfg, state) -> dict:
         if not tasks:
             return {"status": "error", "error": "No valid task IDs (must start with 'task_')"}
 
-        # Guard: don't regenerate data for tasks that already score well
-        # EXCEPTION: always allow if task is below training minimum (can't train without it)
-        if state.scores:
-            import json as _json
-            from collections import Counter as _Counter
-            _counts = _Counter()
-            if cfg.train_file.exists():
-                for _line in cfg.train_file.read_text().splitlines():
-                    if _line.strip():
-                        try:
-                            _counts[_json.loads(_line).get("task_id", "")] += 1
-                        except _json.JSONDecodeError:
-                            pass
-            _min = cfg._data.get("data", {}).get("min_per_task", 30)
-            protected = [t for t in tasks
-                         if state.scores.get(t, 0) >= 0.5 and _counts.get(t, 0) >= _min]
-            if protected:
-                log_print(f"  [generate_data] SKIPPING {len(protected)} tasks scoring ≥50% with ≥{_min} examples: {protected}")
-                tasks = [t for t in tasks if t not in protected]
-            if not tasks:
-                return {"status": "success", "result": {"generated": 0, "note": "All requested tasks already have sufficient data"}, "cost_usd": 0}
+        # Guard: skip tasks that already have enough data OR score well
+        import json as _json
+        from collections import Counter as _Counter
+        _counts = _Counter()
+        if cfg.train_file.exists():
+            for _line in cfg.train_file.read_text().splitlines():
+                if _line.strip():
+                    try:
+                        _counts[_json.loads(_line).get("task_id", "")] += 1
+                    except _json.JSONDecodeError:
+                        pass
+        _target = cfg._data.get("data", {}).get("examples_per_task", 50)
+        _min = cfg._data.get("data", {}).get("min_per_task", 30)
+
+        skip = []
+        for t in tasks:
+            count = _counts.get(t, 0)
+            score = state.scores.get(t, 0) if state.scores else 0
+            # Skip if: already at target count, OR scores well and has enough data
+            if count >= _target:
+                skip.append((t, f"already at target ({count}≥{_target})"))
+            elif score >= 0.5 and count >= _min:
+                skip.append((t, f"scores {score:.0%} with {count}≥{_min} examples"))
+        if skip:
+            for t, reason in skip:
+                log_print(f"  [generate_data] SKIPPING {t}: {reason}")
+            tasks = [t for t in tasks if t not in [s[0] for s in skip]]
+        if not tasks:
+            return {"status": "success", "result": {"generated": 0, "note": "All tasks have sufficient data"}, "cost_usd": 0}
 
         # Use targeted_topup (task definitions that match what scores well)
         # NOT dynamic_gen (reads PinchBench .md files which have different definitions)
