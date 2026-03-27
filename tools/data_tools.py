@@ -202,13 +202,26 @@ def generate_data(args: dict, cfg, state) -> dict:
             return {"status": "error", "error": "No valid task IDs (must start with 'task_')"}
 
         # Guard: don't regenerate data for tasks that already score well
+        # EXCEPTION: always allow if task is below training minimum (can't train without it)
         if state.scores:
-            protected = [t for t in tasks if state.scores.get(t, 0) >= 0.5]
+            import json as _json
+            from collections import Counter as _Counter
+            _counts = _Counter()
+            if cfg.train_file.exists():
+                for _line in cfg.train_file.read_text().splitlines():
+                    if _line.strip():
+                        try:
+                            _counts[_json.loads(_line).get("task_id", "")] += 1
+                        except _json.JSONDecodeError:
+                            pass
+            _min = cfg._data.get("data", {}).get("min_per_task", 30)
+            protected = [t for t in tasks
+                         if state.scores.get(t, 0) >= 0.5 and _counts.get(t, 0) >= _min]
             if protected:
-                log_print(f"  [generate_data] SKIPPING {len(protected)} tasks scoring ≥50%: {protected}")
+                log_print(f"  [generate_data] SKIPPING {len(protected)} tasks scoring ≥50% with ≥{_min} examples: {protected}")
                 tasks = [t for t in tasks if t not in protected]
             if not tasks:
-                return {"status": "success", "result": {"generated": 0, "note": "All requested tasks already score ≥50%"}, "cost_usd": 0}
+                return {"status": "success", "result": {"generated": 0, "note": "All requested tasks already have sufficient data"}, "cost_usd": 0}
 
         # Use targeted_topup (task definitions that match what scores well)
         # NOT dynamic_gen (reads PinchBench .md files which have different definitions)
