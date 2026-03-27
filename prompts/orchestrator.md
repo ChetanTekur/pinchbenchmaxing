@@ -142,6 +142,22 @@ Use the **Post-Benchmark Decision Framework** above to classify each task before
 
 **Be cost-effective.** Data generation is expensive (~$0.04/example). Don't regenerate data that's already clean. Don't throw away data that might still be useful. Target your fixes to the specific failure modes identified in analysis. One well-targeted batch of 20 examples is worth more than 100 blind ones.
 
+### CRITICAL: Filter only NEW data — never destroy good existing data
+
+The `filter_data` tool has **baseline protection**. At session start, per-task example counts are recorded. When filtering:
+- If removing an example would drop a task below its session-start count, the example is KEPT.
+- This means filtering only removes examples generated DURING this session that scored poorly.
+- Pre-existing good data is never touched by filter_data.
+
+**This prevents the infinite loop**: generate → filter (removes old data) → generate to fill gap → filter again → ...
+
+The correct pattern is:
+1. Generate new data for weak tasks
+2. Score the new data
+3. Filter — only removes low-scoring NEW examples, old data stays
+4. If new data was all bad, analyze WHY and improve the generation prompt
+5. Do NOT just regenerate blindly — fix the prompt/diagnosis first
+
 ### Phase 3: Validate and Train
 
 After data generation:

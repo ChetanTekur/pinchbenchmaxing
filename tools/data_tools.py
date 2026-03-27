@@ -355,12 +355,18 @@ def score_data(args: dict, cfg, state) -> dict:
 def filter_data(args: dict, cfg, state) -> dict:
     """Filter training data below minimum judge score.
 
-    PROTECTED: won't remove examples from tasks at or below minimum count.
+    PROTECTED: won't remove examples that existed at session start (baseline).
+    Also protects tasks at or below minimum count.
     """
     try:
         min_score = args.get("min_score", cfg.data.min_judge_score)
         train_file = cfg.train_file
         _min = cfg._data.get("data", {}).get("min_per_task", 30)
+
+        # Baseline counts from session start — never drop a task below these
+        baseline = getattr(state, "baseline_task_counts", {}) or {}
+        if baseline:
+            log_print(f"  [filter_data] Session baseline: {sum(baseline.values())} examples across {len(baseline)} tasks — will not drop below these")
 
         # Count per task BEFORE filtering
         from collections import Counter as _Counter
@@ -378,7 +384,7 @@ def filter_data(args: dict, cfg, state) -> dict:
         if protected_tasks:
             log_print(f"  [filter_data] PROTECTING {len(protected_tasks)} tasks near minimum: {sorted(protected_tasks)}")
 
-        # Filter in-process with protection for near-minimum tasks
+        # Filter in-process with protection
         # (Don't use llm_judge.py filter — it has no per-task protection)
         scores_file = cfg.data_dir / "scores.json"
         scores = {}
@@ -388,6 +394,8 @@ def filter_data(args: dict, cfg, state) -> dict:
         before = sum(before_counts.values())
         kept_lines = []
         removed_count = 0
+        # Track how many we keep per task so we can enforce baseline floor
+        kept_per_task = _Counter()
 
         if train_file.exists():
             for line in train_file.read_text().splitlines():
@@ -397,9 +405,10 @@ def filter_data(args: dict, cfg, state) -> dict:
                     ex = json.loads(line)
                     task_id = ex.get("task_id", "")
 
-                    # Never remove from protected tasks
+                    # Never remove from protected tasks (near minimum)
                     if task_id in protected_tasks:
                         kept_lines.append(line)
+                        kept_per_task[task_id] += 1
                         continue
 
                     # Check score — build key same as llm_judge
@@ -411,9 +420,17 @@ def filter_data(args: dict, cfg, state) -> dict:
 
                     score_entry = scores.get(key) or scores.get(alt_key)
                     if score_entry and score_entry.get("score", 5) < min_score:
-                        removed_count += 1
+                        # Would remove — but check baseline floor first
+                        task_baseline = baseline.get(task_id, 0)
+                        if task_baseline > 0 and kept_per_task[task_id] < task_baseline:
+                            # Removing this would drop below session-start count — keep it
+                            kept_lines.append(line)
+                            kept_per_task[task_id] += 1
+                        else:
+                            removed_count += 1
                     else:
                         kept_lines.append(line)
+                        kept_per_task[task_id] += 1
                 except json.JSONDecodeError:
                     kept_lines.append(line)
 
@@ -422,7 +439,7 @@ def filter_data(args: dict, cfg, state) -> dict:
         after = len(kept_lines)
         log_print(f"  [filter_data] {before} → {after} (removed {removed_count}, protected {len(protected_tasks)} tasks)")
 
-        result = {"kept": after, "removed": removed}
+        result = {"kept": after, "removed": removed_count}
 
         # Post-curation coverage check
         coverage = _post_curation_check(train_file)

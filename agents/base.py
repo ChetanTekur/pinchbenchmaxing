@@ -140,6 +140,7 @@ class AgentState:
     base_model:          str   = ""   # tracks which HF model this state is for
     scratchpad:          list  = field(default_factory=list)  # [{timestamp, note}] — agent's working memory
     last_data_summary:   dict  = field(default_factory=dict)  # cached inspect_data result
+    baseline_task_counts: dict = field(default_factory=dict)  # per-task counts at session start — filter protection
 
     @property
     def avg_score(self) -> float:
@@ -217,6 +218,7 @@ class AgentState:
             "base_model":          self.base_model,
             "scratchpad":          self.scratchpad,
             "last_data_summary":   self.last_data_summary,
+            "baseline_task_counts": self.baseline_task_counts,
         }
 
     @classmethod
@@ -242,6 +244,7 @@ class AgentState:
             base_model=           d.get("base_model", ""),
             scratchpad=           d.get("scratchpad", []),
             last_data_summary=    d.get("last_data_summary", {}),
+            baseline_task_counts= d.get("baseline_task_counts", {}),
         )
 
 

@@ -609,6 +609,20 @@ def main():
         state.action_history = []
         state.budget_spent_usd = 0.0
 
+        # Record per-task counts at session start — filter_data uses this
+        # to protect pre-existing data from being removed
+        from collections import Counter
+        _baseline = Counter()
+        if cfg.train_file.exists():
+            for _line in cfg.train_file.read_text().splitlines():
+                if _line.strip():
+                    try:
+                        _baseline[json.loads(_line).get("task_id", "")] += 1
+                    except json.JSONDecodeError:
+                        pass
+        state.baseline_task_counts = dict(_baseline)
+        log_print(f"[ORCHESTRATOR AGENT] Baseline counts: {sum(_baseline.values())} examples across {len(_baseline)} tasks")
+
         if args.fresh:
             # Full reset — no preconceptions
             state.scratchpad = []

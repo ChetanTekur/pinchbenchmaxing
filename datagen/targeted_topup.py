@@ -18,6 +18,7 @@ import os
 import random
 import sys
 import argparse
+from datetime import datetime
 from pathlib import Path
 
 import anthropic
@@ -336,7 +337,7 @@ def cmd_collect():
         for ex in examples:
             parsed = parse_example(ex, task_id)
             if parsed:
-                parsed["source"] = "targeted"
+                parsed["source"] = f"targeted_{datetime.now().strftime('%Y%m%d')}"
                 new_by_task[task_id].append(parsed)
 
     # Append to train/val
