@@ -54,7 +54,7 @@ loop:
 
 orchestrator:
   model: claude-sonnet-4-6      # model for orchestrator decisions (~$0.03/turn)
-  max_actions: 200              # safety cap only — budget is the real limit
+  max_actions: 15               # tight cap: generate + validate + train + convert + register + benchmark
   budget_usd: 75                # total budget per session (API + GPU estimated)
   gpu_rate_per_hour: 3.60       # for GPU cost estimation
   auto_pause:
