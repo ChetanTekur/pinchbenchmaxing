@@ -206,9 +206,9 @@ def generate_data(args: dict, cfg, state) -> dict:
             if not tasks:
                 return {"status": "success", "result": {"generated": 0, "note": "All requested tasks already score ≥50%"}, "cost_usd": 0}
 
-        # Use dynamic_gen (reads from PinchBench .md files) instead of
-        # targeted_topup (hardcoded task definitions)
-        script = str(_PROJECT_ROOT / "datagen" / "dynamic_gen.py")
+        # Use targeted_topup (task definitions that match what scores well)
+        # NOT dynamic_gen (reads PinchBench .md files which have different definitions)
+        script = str(_PROJECT_ROOT / "datagen" / "targeted_topup.py")
         generated = {}
         total_generated = 0
 
