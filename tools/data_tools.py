@@ -353,31 +353,74 @@ def score_data(args: dict, cfg, state) -> dict:
 # ── filter_data ──────────────────────────────────────────────────────────────
 
 def filter_data(args: dict, cfg, state) -> dict:
-    """Filter training data below minimum judge score."""
+    """Filter training data below minimum judge score.
+
+    PROTECTED: won't remove examples from tasks at or below minimum count.
+    """
     try:
         min_score = args.get("min_score", cfg.data.min_judge_score)
-        script = str(_PROJECT_ROOT / "datagen" / "llm_judge.py")
-
-        # Count before
         train_file = cfg.train_file
-        before = 0
+        _min = cfg._data.get("data", {}).get("min_per_task", 30)
+
+        # Count per task BEFORE filtering
+        from collections import Counter as _Counter
+        before_counts = _Counter()
         if train_file.exists():
-            before = sum(1 for line in train_file.read_text().splitlines() if line.strip())
+            for line in train_file.read_text().splitlines():
+                if line.strip():
+                    try:
+                        before_counts[json.loads(line).get("task_id", "")] += 1
+                    except json.JSONDecodeError:
+                        pass
 
-        rc, output = _run_script(
-            [sys.executable, script, "filter", "--min", str(min_score)],
-            "filter_data",
-        )
+        # Snapshot tasks at or near minimum — these must not lose examples
+        protected_tasks = {t for t, c in before_counts.items() if c <= _min + 5}
+        if protected_tasks:
+            log_print(f"  [filter_data] PROTECTING {len(protected_tasks)} tasks near minimum: {sorted(protected_tasks)}")
 
-        if rc != 0:
-            return {"status": "error", "error": f"filter exited with code {rc}"}
+        # Filter in-process with protection for near-minimum tasks
+        # (Don't use llm_judge.py filter — it has no per-task protection)
+        scores_file = cfg.data_dir / "scores.json"
+        scores = {}
+        if scores_file.exists():
+            scores = json.loads(scores_file.read_text())
 
-        # Count after
-        after = 0
+        before = sum(before_counts.values())
+        kept_lines = []
+        removed_count = 0
+
         if train_file.exists():
-            after = sum(1 for line in train_file.read_text().splitlines() if line.strip())
+            for line in train_file.read_text().splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    ex = json.loads(line)
+                    task_id = ex.get("task_id", "")
 
-        removed = before - after
+                    # Never remove from protected tasks
+                    if task_id in protected_tasks:
+                        kept_lines.append(line)
+                        continue
+
+                    # Check score — build key same as llm_judge
+                    msgs = ex.get("messages", [])
+                    user_msgs = [m for m in msgs if m.get("role") == "user"]
+                    user_text = user_msgs[0]["content"][:80] if user_msgs else ""
+                    key = f"{task_id}|{user_text}"
+                    alt_key = f"{task_id}::{user_text}"
+
+                    score_entry = scores.get(key) or scores.get(alt_key)
+                    if score_entry and score_entry.get("score", 5) < min_score:
+                        removed_count += 1
+                    else:
+                        kept_lines.append(line)
+                except json.JSONDecodeError:
+                    kept_lines.append(line)
+
+            train_file.write_text("\n".join(kept_lines) + "\n" if kept_lines else "")
+
+        after = len(kept_lines)
+        log_print(f"  [filter_data] {before} → {after} (removed {removed_count}, protected {len(protected_tasks)} tasks)")
 
         result = {"kept": after, "removed": removed}
 
