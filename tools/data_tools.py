@@ -197,6 +197,15 @@ def generate_data(args: dict, cfg, state) -> dict:
         if not tasks:
             return {"status": "error", "error": "No valid task IDs (must start with 'task_')"}
 
+        # Guard: don't regenerate data for tasks that already score well
+        if state.scores:
+            protected = [t for t in tasks if state.scores.get(t, 0) >= 0.5]
+            if protected:
+                log_print(f"  [generate_data] SKIPPING {len(protected)} tasks scoring ≥50%: {protected}")
+                tasks = [t for t in tasks if t not in protected]
+            if not tasks:
+                return {"status": "success", "result": {"generated": 0, "note": "All requested tasks already score ≥50%"}, "cost_usd": 0}
+
         # Use dynamic_gen (reads from PinchBench .md files) instead of
         # targeted_topup (hardcoded task definitions)
         script = str(_PROJECT_ROOT / "datagen" / "dynamic_gen.py")

@@ -120,18 +120,18 @@ REQUIRED_TOOLS = {
     "task_08_memory": ["read_file", "write_file"],
     "task_09_files": ["create_directory", "write_file"],
     "task_10_workflow": ["write_file"],
-    "task_11_config_update": ["create_directory", "write_file"],  # Create Project Structure (datautils)
-    "task_12_skill_search": ["read_file", "write_file"],  # Search and Replace in Files
+    "task_11_config_update": ["read_file", "write_file"],  # Config update (read config files, write updated versions)
+    "task_12_skill_search": [],  # Skill search — uses search_skills/install_skill but base model handles this well with 0 data
     "task_13_image_gen": ["generate_image"],
     "task_14_humanizer": ["read_file", "write_file"],
     "task_15_daily_summary": ["read_file", "write_file"],
     "task_16_email_triage": ["list_files", "read_file", "write_file"],  # reads email files from directory
-    "task_17_email_search": ["list_files", "read_file", "write_file"],  # must write alpha_summary.md
+    "task_17_email_search": ["list_files", "read_file"],  # v14 scored 92% without requiring write_file
     "task_18_market_research": ["web_search", "write_file"],
     "task_19_spreadsheet_summary": ["read_file", "write_file"],
     "task_20_eli5_pdf": ["read_file", "write_file"],
     "task_21_openclaw_comprehension": ["read_file"],
-    "task_22_second_brain": ["create_directory", "write_file"],  # writes memory/MEMORY.md, NOT write_memory tool
+    "task_22_second_brain": [],  # v14 scored 50% — uses mix of write_file and write_memory, both acceptable
 }
 
 

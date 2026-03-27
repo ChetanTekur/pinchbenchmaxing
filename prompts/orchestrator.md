@@ -98,10 +98,12 @@ Compare current scores against previous benchmark. For each task:
 After analysis, classify each failing task into one of these categories before taking action.
 
 #### LEAVE ALONE — do not touch the data
-- Task already scores **90%+** — don't change data even if deep_validate flags issues
+- Task already scores **50%+** — DO NOT regenerate, remove, or modify data for this task
 - Task has newly generated data (from this session) that **hasn't been benchmarked yet** — test first
 - Deep validate issues are **cosmetic** (truncated tail, low diversity) but benchmark score is good
 - Task scores well and was never touched — the base model handles it fine
+- **NEVER run `validate_data --fix` or `filter_data` without first snapshotting. These delete data irreversibly.**
+- **NEVER regenerate data for ALL tasks. Only generate for specific 0% tasks.**
 
 #### FIX (targeted edit) — cheapest intervention
 - Task scores 0% and data uses **wrong filenames** vs what the benchmark expects

@@ -360,25 +360,22 @@ TASKS = {
         "complexity": "hard",
     },
     "task_11_config_update": {
-        "name": "Create Project Structure",
+        "name": "Production Configuration Update",
         "prompt": (
-            "Create a foundational Python package structure for a library named "
-            "'datautils'. Set up:\n"
-            "1. Directory hierarchy: src/datautils/ and tests/\n"
-            "2. Package file: src/datautils/__init__.py with substantive content\n"
-            "3. Test module: tests/test_datautils.py with sample test code\n"
-            "4. Configuration: pyproject.toml with project name, version 0.1.0, and description\n"
-            "5. Documentation: README.md with title and overview"
+            "Update the production config files config/settings.json and "
+            "config/database.yml: replace all 'localhost' with "
+            "'prod-db.example.com', rename DB from *_dev and *_test to *_prod, "
+            "change logging level from 'debug' to 'warn', update API endpoint "
+            "to 'https://api.example.com'."
         ),
         "grading": [
-            "src/datautils/ directory created",
-            "tests/ directory created",
-            "src/datautils/__init__.py created with meaningful content",
-            "tests/test_datautils.py created with sample test code",
-            "pyproject.toml created with 'datautils' and version 0.1.0",
-            "README.md created with title and overview",
+            "localhost replaced with prod-db.example.com in both files",
+            "DB names updated to prod variants",
+            "Logging level changed from debug to warn",
+            "API endpoint updated to https://api.example.com",
+            "Both files remain valid JSON/YAML after edits",
         ],
-        "tools_needed": ["create_directory", "write_file"],
+        "tools_needed": ["read_file", "write_file"],
         "complexity": "medium",
     },
     "task_19_spreadsheet_summary": {
@@ -429,26 +426,19 @@ TASKS = {
         "complexity": "hard",
     },
     "task_12_skill_search": {
-        "name": "Search and Replace in Files",
+        "name": "Skill Search and Discovery",
         "prompt": (
-            "Update the production config files config/settings.json and "
-            "config/database.yml for deployment:\n"
-            "1. Replace all 'localhost' with 'prod-db.example.com'\n"
-            "2. Rename databases: myapp_dev and myapp_test → myapp_prod\n"
-            "3. Change logging level from 'debug' to 'warn' (settings.json only)\n"
-            "4. Update API endpoint from 'http://localhost:3000' to 'https://api.example.com'\n"
-            "Preserve valid JSON and YAML syntax after all changes."
+            "Search ClawHub for a data visualization skill, install the best "
+            "result, and use it to create a simple chart saved to chart_output.png."
         ),
         "grading": [
-            "config/settings.json read and modified",
-            "config/database.yml read and modified",
-            "localhost replaced with prod-db.example.com in both files",
-            "Database names updated to myapp_prod",
-            "Logging level changed from debug to warn",
-            "API endpoint updated to https://api.example.com",
+            "search_skills tool was called",
+            "install_skill tool was called with a relevant skill name",
+            "An output file (chart or image) was created",
+            "Task completed end-to-end with the installed skill",
         ],
-        "tools_needed": ["read_file", "write_file"],
-        "complexity": "medium",
+        "tools_needed": ["search_skills", "install_skill", "write_file"],
+        "complexity": "hard",
     },
     "task_13_image_gen": {
         "name": "Image Generation",
