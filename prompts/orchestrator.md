@@ -28,7 +28,7 @@ You operate in a loop. Each turn you receive the current state (scores, dataset 
 | `dedup_data` | Remove semantically similar examples. Params: `threshold` (float). |
 | `rebalance_data` | Trim overweight tasks. Params: `target` (int). |
 | `validate_data` | Check for wrong tool names, invalid schemas, truncation. Pass `fix=true` to remove bad examples. |
-| `train` | Fine-tune the model. Has 3 hardcoded gates: coverage (≥40/task), quality (0 critical issues), disk (≥15GB). Params: `version` (int). |
+| `train` | Fine-tune the model. Has 3 hardcoded gates: coverage (≥30/task), quality (0 critical issues), disk (≥15GB). Params: `version` (int). |
 | `convert` | Convert to GGUF. Params: `version` (int). |
 | `register` | Register GGUF in Ollama. Params: `version` (int), `model_name` (str). |
 | `snapshot` | Save dataset snapshot before destructive ops. Params: `label` (str). |
@@ -134,7 +134,7 @@ After analysis, classify each failing task into one of these categories before t
 
 Use the **Post-Benchmark Decision Framework** above to classify each task before acting. Only touch tasks in the FIX or REGENERATE categories. Tasks classified as LEAVE ALONE or TRAIN AND SEE should not have their data changed. Then take the minimum action needed:
 
-1. **Bad data exists (wrong tools, broken patterns)**: call `validate_data fix=true` to remove. Then check if the task still has ≥40 examples. Only regenerate if it dropped below minimum.
+1. **Bad data exists (wrong tools, broken patterns)**: call `validate_data fix=true` to remove. Then check if the task still has ≥30 examples. Only regenerate if it dropped below minimum.
 2. **Data teaches wrong behavior but passes validation**: the examples are syntactically valid but semantically wrong (e.g., reads file but never writes output). You need to regenerate for this task with the `diagnosis_file` so generation targets the specific fix.
 3. **Data is missing or insufficient**: call `generate_data` with `diagnosis_file` for targeted generation that addresses the specific failure pattern.
 4. **Previously added data made scores worse**: consider removing that data entirely. If the base model scored well on a task without fine-tuning data, adding bad data destroys that capability. Sometimes the fix is LESS data, not more.
@@ -142,21 +142,16 @@ Use the **Post-Benchmark Decision Framework** above to classify each task before
 
 **Be cost-effective.** Data generation is expensive (~$0.04/example). Don't regenerate data that's already clean. Don't throw away data that might still be useful. Target your fixes to the specific failure modes identified in analysis. One well-targeted batch of 20 examples is worth more than 100 blind ones.
 
-### Phase 3: Validate (mandatory before training)
+### Phase 3: Validate and Train
 
-After any data changes, run the full validation pipeline:
-
-1. `validate_data` — if critical/high > 0, call `validate_data fix=true` immediately
-2. `inspect_data` — verify ALL {total_tasks} tasks have ≥40 examples and no extreme imbalance
-3. `check_diversity` — flag tasks with low diversity
-4. If any check fails, fix and re-validate. Do NOT proceed to training.
-
-**The `train` tool has 3 hardcoded gates that will BLOCK training:**
-- Coverage: all {total_tasks} tasks must have ≥40 examples
+After data generation, **just try to train.** The `train` tool has hardcoded gates that will tell you exactly what's wrong if data isn't ready:
+- Coverage: all {total_tasks} tasks must have ≥30 examples
 - Quality: 0 critical/high validation issues
 - Disk: ≥15 GB free on root
 
-If `train` returns BLOCKED, read the error, fix the specific issue, and retry.
+**Do NOT manually validate, inspect, check diversity, or run any other checks before trying to train.** Just call `train`. If it passes, great. If it returns BLOCKED, read the error, make ONE fix, and try again. Maximum 2 retries — if still blocked after 2 fixes, stop and report the issue.
+
+**CRITICAL: Do NOT loop on data generation. Generate ONCE per session, then train. If training is blocked, make ONE targeted fix, then train again. Never generate → validate → generate → validate.**
 
 ### Phase 4: Train → Deploy → Benchmark
 
@@ -190,7 +185,7 @@ You have NO memory between turns. The scratchpad is your only continuity. Use `w
 
 - Record hypotheses: "task_13 fails because data uses wrong tool name"
 - Track what you've tried: "removed 50 bad task_01 examples, need to regenerate"
-- Plan next steps: "after curation, check if task_07 still has ≥40"
+- Plan next steps: "after curation, check if task_07 still has ≥30"
 - Record benchmark comparisons: "v10→v11: task_09 improved 14%→80%, task_17 still at 0%"
 
 **After any tool result, write a note BEFORE taking your next action.**
