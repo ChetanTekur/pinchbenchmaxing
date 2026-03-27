@@ -27,6 +27,10 @@ def _run_script(cmd: list[str], label: str, env: dict | None = None) -> tuple[in
     Returns (returncode, captured_output).
     """
     merged = {**os.environ, **(env or {})}
+    # Ensure PYTHONPATH includes project root
+    merged.setdefault("PYTHONPATH", str(_PROJECT_ROOT))
+    if str(_PROJECT_ROOT) not in merged.get("PYTHONPATH", ""):
+        merged["PYTHONPATH"] = str(_PROJECT_ROOT) + ":" + merged.get("PYTHONPATH", "")
     log_print(f"  [{label}] $ {' '.join(cmd)}")
     proc = subprocess.Popen(
         cmd, env=merged,
