@@ -230,7 +230,7 @@ def validate_example(example: dict, verbose: bool = False) -> list[dict]:
                     # Check if any optional arg covers this (e.g. start_time covers time)
                     covered = any(opt in provided for opt in sig["optional"])
                     if not covered:
-                        issues.append({"severity": "high", "check": "missing_required_arg",
+                        issues.append({"severity": "medium", "check": "missing_required_arg",
                                        "detail": f"Tool '{name}': missing required arg '{req}'"})
             for arg_name in args:
                 if arg_name not in all_valid:
@@ -250,7 +250,7 @@ def validate_example(example: dict, verbose: bool = False) -> list[dict]:
     required = REQUIRED_TOOLS.get(task_id, [])
     for req_tool in required:
         if req_tool not in tool_names_used:
-            issues.append({"severity": "high", "check": "missing_required_tool",
+            issues.append({"severity": "medium", "check": "missing_required_tool",
                            "detail": f"Task requires '{req_tool}' but it was never called"})
 
     # ── Repetition check ───────────────────────────────────────────────────

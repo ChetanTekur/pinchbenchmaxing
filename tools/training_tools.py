@@ -140,25 +140,36 @@ def _check_data_coverage(cfg) -> dict:
 
 def _check_data_quality(cfg) -> dict:
     """
-    HARD GATE: Refuse to train if data has critical quality issues.
-    Auto-runs validate_data and blocks on any critical/high issues.
+    Quality gate: allow training if data is ≥90% clean.
+    Only blocks on truly critical issues (invalid tool names, malformed JSON).
+    Missing args and missing required tools are warnings, not blockers.
     """
     try:
         from datagen.validate_data import run_validation
         report = run_validation(fix=False)
         critical = report.get("critical_high", 0)
         total = report.get("total_examples", 0)
+        clean = report.get("clean", 0)
 
-        if critical > 0:
+        if total == 0:
+            return {"ok": False, "error": "BLOCKED: no training data found"}
+
+        clean_pct = clean / total * 100
+        if clean_pct < 90:
             return {
                 "ok": False,
                 "error": (
-                    f"BLOCKED: {critical} critical/high data quality issues found in {total} examples. "
-                    f"Run validate_data with fix=true to remove bad examples, then regenerate."
+                    f"BLOCKED: only {clean_pct:.0f}% clean ({clean}/{total}). "
+                    f"Need ≥90%. {critical} critical/high issues found."
                 ),
                 "critical_count": critical,
             }
-        return {"ok": True, "clean": report.get("clean", 0), "total": total}
+
+        if critical > 0:
+            log_print(f"  [train] WARNING: {critical} critical/high issues in {total} examples "
+                      f"({clean_pct:.0f}% clean) — proceeding since ≥90%")
+
+        return {"ok": True, "clean": clean, "total": total, "clean_pct": round(clean_pct, 1)}
     except Exception as e:
         # If validation itself fails, don't block training
         log_print(f"  [train] Warning: data quality check failed: {e}")

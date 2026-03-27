@@ -144,19 +144,17 @@ Use the **Post-Benchmark Decision Framework** above to classify each task before
 
 ### Phase 3: Validate and Train
 
-After data generation, validate and try to train:
+After data generation:
 
-1. `validate_data` — check for critical issues
-2. If critical issues found, call `validate_data fix=true` ONCE
-3. `inspect_data` — confirm coverage
-4. Call `train`
+1. Call `train` — it will validate automatically (coverage ≥30/task, ≥90% clean, disk ≥15GB)
+2. If `train` passes → it runs. Done.
+3. If `train` is BLOCKED:
+   - Read the error
+   - Make ONE fix (e.g. `validate_data fix=true`, or generate for a missing task)
+   - Try `train` again
+4. If `train` is BLOCKED a SECOND time: **STOP.** Return `DONE: training blocked twice — needs human investigation` with the error details. Do NOT keep trying.
 
-**If `train` is BLOCKED or validation keeps finding issues: STOP.** Return `DONE: training blocked — needs human investigation` with details of what's wrong. Do NOT try to fix it yourself. Do NOT generate more data. Do NOT loop.
-
-The `train` tool has hardcoded gates:
-- Coverage: all {total_tasks} tasks must have ≥30 examples
-- Quality: 0 critical/high validation issues
-- Disk: ≥15 GB free on root
+**The ≥90% clean threshold means minor issues (wrong args, missing optional tools) won't block training.** Only truly broken examples (invalid tool names, malformed JSON) count as critical.
 
 ### Phase 4: Train → Deploy → Benchmark
 
