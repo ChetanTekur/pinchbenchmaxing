@@ -377,6 +377,17 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
             log_print(f"\n[ORCHESTRATOR AGENT] {consecutive_failures} consecutive failures. Stopping.")
             break
 
+        # Loop detection: if data generation has been called 5+ times without
+        # reaching training, we're stuck in a generate→validate loop
+        recent = state.action_history[-10:] if len(state.action_history) >= 10 else []
+        if len(recent) >= 10:
+            gen_count = sum(1 for a in recent if a["action"] in ("generate_data", "generate_adversarial"))
+            train_count = sum(1 for a in recent if a["action"] == "train")
+            if gen_count >= 5 and train_count == 0:
+                log_print(f"\n[ORCHESTRATOR AGENT] LOOP DETECTED: {gen_count} generation calls in last 10 actions without training. Stopping.")
+                log_print(f"[ORCHESTRATOR AGENT] Fix data issues manually, then restart.")
+                break
+
         # ── Call Claude ────────────────────────────────────────────────────
         turn_context = build_turn_context(state, cfg)
 
