@@ -206,10 +206,23 @@ def train(args: dict, cfg, state) -> dict:
         log_print(f"  [train]   Total: {sum(_snap.values())} examples")
         for tid in sorted(_snap.keys()):
             log_print(f"  [train]   {tid}: {_snap[tid]}")
-        # Save snapshot JSON for cross-version comparison
+        # Build changelog from action history — what data changes were made this session
+        changelog = []
+        for action in state.action_history:
+            act = action.get("action", "")
+            summary = action.get("result_summary", "")[:100]
+            if act in ("generate_data", "generate_adversarial", "filter_data",
+                       "dedup_data", "rebalance_data", "validate_data"):
+                changelog.append(f"{act}: {summary}")
+
+        # Save snapshot + changelog for cross-version comparison
         snap_file = cfg.data_dir / f"data_snapshot_v{version}.json"
-        snap_file.write_text(json.dumps({"version": version, "total": sum(_snap.values()),
-                                         "per_task": dict(_snap)}, indent=2))
+        snap_file.write_text(json.dumps({
+            "version": version,
+            "total": sum(_snap.values()),
+            "per_task": dict(_snap),
+            "changelog": changelog,
+        }, indent=2))
         log_print(f"  [train]   Saved: {snap_file}")
 
         # HARD GATE 3: check disk space

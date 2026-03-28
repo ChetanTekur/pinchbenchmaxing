@@ -263,6 +263,18 @@ def _read_version_comparison(cfg) -> str:
         lines.append("DATA DISTRIBUTION PER VERSION:")
         lines.extend(snap_lines)
 
+    # Include changelogs — what data changes were made for each version
+    for v in ver_names:
+        ver_num = v[1:] if v.startswith("v") else v
+        snap_file = data_dir / f"data_snapshot_v{ver_num}.json"
+        if snap_file.exists():
+            snap = json.loads(snap_file.read_text())
+            cl = snap.get("changelog", [])
+            if cl:
+                lines.append(f"\n{v} CHANGES:")
+                for entry in cl[:10]:  # cap at 10
+                    lines.append(f"  - {entry}")
+
     return "\n".join(lines)
 
 
