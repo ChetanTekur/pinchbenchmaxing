@@ -191,6 +191,27 @@ def train(args: dict, cfg, state) -> dict:
             log_print(f"  [train] {quality['error']}")
             return {"status": "error", "error": quality["error"]}
 
+        # Snapshot data distribution to log — permanent record of what each version trained on
+        from collections import Counter as _Counter
+        _snap = _Counter()
+        if cfg.train_file.exists():
+            for _line in cfg.train_file.read_text().splitlines():
+                if _line.strip():
+                    try:
+                        _snap[json.loads(_line).get("task_id", "")] += 1
+                    except json.JSONDecodeError:
+                        pass
+        version = args.get("version", "?")
+        log_print(f"  [train] DATA SNAPSHOT (v{version}):")
+        log_print(f"  [train]   Total: {sum(_snap.values())} examples")
+        for tid in sorted(_snap.keys()):
+            log_print(f"  [train]   {tid}: {_snap[tid]}")
+        # Save snapshot JSON for cross-version comparison
+        snap_file = cfg.data_dir / f"data_snapshot_v{version}.json"
+        snap_file.write_text(json.dumps({"version": version, "total": sum(_snap.values()),
+                                         "per_task": dict(_snap)}, indent=2))
+        log_print(f"  [train]   Saved: {snap_file}")
+
         # HARD GATE 3: check disk space
         root_free = shutil.disk_usage("/").free / (1024**3)
         if root_free < 15:

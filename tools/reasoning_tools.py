@@ -245,6 +245,24 @@ def _read_version_comparison(cfg) -> str:
         avg_line += f"{versions[v]['avg']:>7.1%} "
     lines.append(avg_line)
 
+    # Include data distribution snapshots if available
+    data_dir = cfg.data_dir
+    snap_lines = []
+    for v in ver_names:
+        ver_num = v[1:] if v.startswith("v") else v
+        snap_file = data_dir / f"data_snapshot_v{ver_num}.json"
+        if snap_file.exists():
+            snap = json.loads(snap_file.read_text())
+            per_task = snap.get("per_task", {})
+            total = snap.get("total", 0)
+            min_count = min(per_task.values()) if per_task else 0
+            max_count = max(per_task.values()) if per_task else 0
+            snap_lines.append(f"  {v}: {total} examples (range {min_count}-{max_count})")
+    if snap_lines:
+        lines.append("")
+        lines.append("DATA DISTRIBUTION PER VERSION:")
+        lines.extend(snap_lines)
+
     return "\n".join(lines)
 
 
