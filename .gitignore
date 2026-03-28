@@ -13,6 +13,9 @@ data/
 *.jsonl
 topup.b64
 
+# BUT track versioned training data snapshots in git
+!data/checked_in/
+
 # Python
 __pycache__/
 *.pyc

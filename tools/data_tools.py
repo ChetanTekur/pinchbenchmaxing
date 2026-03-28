@@ -201,35 +201,22 @@ def generate_data(args: dict, cfg, state) -> dict:
         if not tasks:
             return {"status": "error", "error": "No valid task IDs (must start with 'task_')"}
 
-        # Guard: skip tasks that already have enough data OR score well
-        import json as _json
-        from collections import Counter as _Counter
-        _counts = _Counter()
-        if cfg.train_file.exists():
-            for _line in cfg.train_file.read_text().splitlines():
-                if _line.strip():
-                    try:
-                        _counts[_json.loads(_line).get("task_id", "")] += 1
-                    except _json.JSONDecodeError:
-                        pass
-        _target = cfg._data.get("data", {}).get("examples_per_task", 50)
-        _min = cfg._data.get("data", {}).get("min_per_task", 30)
-
-        skip = []
-        for t in tasks:
-            count = _counts.get(t, 0)
-            score = state.scores.get(t, 0) if state.scores else 0
-            # Skip if: already at target count, OR scores well and has enough data
-            if count >= _target:
-                skip.append((t, f"already at target ({count}≥{_target})"))
-            elif score >= 0.5 and count >= _min:
-                skip.append((t, f"scores {score:.0%} with {count}≥{_min} examples"))
-        if skip:
-            for t, reason in skip:
-                log_print(f"  [generate_data] SKIPPING {t}: {reason}")
-            tasks = [t for t in tasks if t not in [s[0] for s in skip]]
-        if not tasks:
-            return {"status": "success", "result": {"generated": 0, "note": "All tasks have sufficient data"}, "cost_usd": 0}
+        # Smart guard: use data analyzer to decide which tasks need generation
+        try:
+            from datagen.data_analyzer import get_task_recommendation
+            skip = []
+            for t in tasks:
+                rec = get_task_recommendation(t, cfg, state.to_dict())
+                if rec in ("LEAVE_ALONE", "INFRASTRUCTURE", "TRIM"):
+                    skip.append((t, rec))
+            if skip:
+                for t, rec in skip:
+                    log_print(f"  [generate_data] SKIPPING {t}: analyzer says {rec}")
+                tasks = [t for t in tasks if t not in [s[0] for s in skip]]
+            if not tasks:
+                return {"status": "success", "result": {"generated": 0, "note": "Analyzer: all tasks sufficient"}, "cost_usd": 0}
+        except Exception as e:
+            log_print(f"  [generate_data] Analyzer failed ({e}), proceeding without guard")
 
         # Use targeted_topup (task definitions that match what scores well)
         # NOT dynamic_gen (reads PinchBench .md files which have different definitions)
@@ -284,29 +271,26 @@ def generate_adversarial(args: dict, cfg, state) -> dict:
         if not tasks:
             return {"status": "error", "error": "No tasks specified"}
 
-        # Same guards as generate_data — don't bloat tasks
+        # Smart guard: use data analyzer
         if isinstance(tasks, str):
             tasks = [t.strip() for t in tasks.split(",") if t.strip()]
         tasks = [t for t in tasks if t.startswith("task_")]
 
-        import json as _json
-        from collections import Counter as _Counter
-        _counts = _Counter()
-        if cfg.train_file.exists():
-            for _line in cfg.train_file.read_text().splitlines():
-                if _line.strip():
-                    try:
-                        _counts[_json.loads(_line).get("task_id", "")] += 1
-                    except _json.JSONDecodeError:
-                        pass
-        _target = cfg._data.get("data", {}).get("examples_per_task", 50)
-
-        skip = [t for t in tasks if _counts.get(t, 0) >= _target]
-        if skip:
-            log_print(f"  [generate_adversarial] SKIPPING {len(skip)} tasks already at target: {skip}")
-            tasks = [t for t in tasks if t not in skip]
-        if not tasks:
-            return {"status": "success", "result": {"generated": 0, "note": "All tasks at target"}, "cost_usd": 0}
+        try:
+            from datagen.data_analyzer import get_task_recommendation
+            skip = []
+            for t in tasks:
+                rec = get_task_recommendation(t, cfg, state.to_dict())
+                if rec in ("LEAVE_ALONE", "INFRASTRUCTURE"):
+                    skip.append((t, rec))
+            if skip:
+                for t, rec in skip:
+                    log_print(f"  [generate_adversarial] SKIPPING {t}: analyzer says {rec}")
+                tasks = [t for t in tasks if t not in skip]
+            if not tasks:
+                return {"status": "success", "result": {"generated": 0, "note": "Analyzer: no tasks need adversarial"}, "cost_usd": 0}
+        except Exception as e:
+            log_print(f"  [generate_adversarial] Analyzer failed ({e}), proceeding without guard")
 
         script = str(_PROJECT_ROOT / "datagen" / "adversarial_gen.py")
         log_dir = str(cfg.data_dir.parent / "logs")
