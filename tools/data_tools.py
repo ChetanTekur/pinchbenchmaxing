@@ -284,6 +284,30 @@ def generate_adversarial(args: dict, cfg, state) -> dict:
         if not tasks:
             return {"status": "error", "error": "No tasks specified"}
 
+        # Same guards as generate_data — don't bloat tasks
+        if isinstance(tasks, str):
+            tasks = [t.strip() for t in tasks.split(",") if t.strip()]
+        tasks = [t for t in tasks if t.startswith("task_")]
+
+        import json as _json
+        from collections import Counter as _Counter
+        _counts = _Counter()
+        if cfg.train_file.exists():
+            for _line in cfg.train_file.read_text().splitlines():
+                if _line.strip():
+                    try:
+                        _counts[_json.loads(_line).get("task_id", "")] += 1
+                    except _json.JSONDecodeError:
+                        pass
+        _target = cfg._data.get("data", {}).get("examples_per_task", 50)
+
+        skip = [t for t in tasks if _counts.get(t, 0) >= _target]
+        if skip:
+            log_print(f"  [generate_adversarial] SKIPPING {len(skip)} tasks already at target: {skip}")
+            tasks = [t for t in tasks if t not in skip]
+        if not tasks:
+            return {"status": "success", "result": {"generated": 0, "note": "All tasks at target"}, "cost_usd": 0}
+
         script = str(_PROJECT_ROOT / "datagen" / "adversarial_gen.py")
         log_dir = str(cfg.data_dir.parent / "logs")
         generated = {}
