@@ -197,6 +197,19 @@ def _decide(signals: TaskSignals) -> tuple[Recommendation, str]:
     judge = signals.judge_score
     count = signals.example_count
 
+    # 0. HARD CEILING — never exceed this regardless of quality/benchmark
+    HARD_CEILING = 80
+    if count >= HARD_CEILING:
+        if bench < BENCH_MID_LO and count > COUNT_BLOAT:
+            return (
+                Recommendation.TRIM,
+                f"Hard ceiling: {count} examples (>{HARD_CEILING}). Trim to ~{COUNT_HIGH}."
+            )
+        return (
+            Recommendation.LEAVE_ALONE,
+            f"Hard ceiling: {count} examples (>={HARD_CEILING}). No more generation."
+        )
+
     # 1. Regression detection
     if signals.regressed and signals.prev_bench_score > 0:
         drop = signals.prev_bench_score - bench
