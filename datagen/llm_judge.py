@@ -309,11 +309,38 @@ def cmd_report():
         print("No scores.json found. Run: python llm_judge.py run")
         sys.exit(1)
 
-    scores     = json.loads(SCORES_FILE.read_text())
-    all_scores = [v["score"] for v in scores.values() if v["score"] > 0]
+    scores = json.loads(SCORES_FILE.read_text())
+
+    # Only report on examples that actually exist in current training data
+    current_keys = set()
+    if TRAIN_FILE.exists():
+        for line in TRAIN_FILE.read_text().splitlines():
+            if line.strip():
+                try:
+                    ex = json.loads(line)
+                    tid = ex.get("task_id", "")
+                    msgs = ex.get("messages", [])
+                    user_msgs = [m for m in msgs if m.get("role") == "user"]
+                    user_text = user_msgs[0]["content"][:80] if user_msgs else ""
+                    current_keys.add(f"{tid}|{user_text}")
+                    current_keys.add(f"{tid}::{user_text}")
+                except (json.JSONDecodeError, IndexError):
+                    pass
+
+    # Filter scores to only current examples
+    active_scores = {}
+    for k, v in scores.items():
+        if k in current_keys:
+            active_scores[k] = v
+
+    all_scores = [v["score"] for v in active_scores.values() if v["score"] > 0]
     by_task    = defaultdict(list)
-    for v in scores.values():
+    for v in active_scores.values():
         by_task[v.get("task_id", "unknown")].append(v["score"])
+
+    if not all_scores:
+        print("No scored examples match current training data. Run: python llm_judge.py run")
+        sys.exit(1)
 
     dist = defaultdict(int)
     for s in all_scores:
@@ -344,9 +371,9 @@ def cmd_report():
             flag = "  ⚠" if avg < 3.0 else ""
             print(f"  {task_id:<40} {avg:>5.2f}  {mn:>4}  {len(task_scores):>6}{flag}")
 
-    # Common issues
+    # Common issues (only from current training data)
     all_issues = []
-    for v in scores.values():
+    for v in active_scores.values():
         all_issues.extend(v.get("issues", []))
     if all_issues:
         issue_counts = defaultdict(int)
