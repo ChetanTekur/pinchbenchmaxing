@@ -32,21 +32,23 @@ Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch):
 | qwen35-9b-clawd-v1 | 9.9 / 23 (43%) | First fine-tune, ~900 examples |
 | qwen35-9b-clawd-v3 | 16.8 / 23 (73%) | Manual topup |
 | qwen35-9b-clawd-v5 | 15.0 / 23 (65%) | First agentic pipeline run |
-| qwen35-9b-clawd-v6 | 16.6 / 23 (72%) | Score-proportional data gen |
 | qwen35-9b-clawd-v7 | 14.8 / 23 (64%) | Regression — dataset imbalance |
-| qwen35-9b-clawd-v8 | 14.0 / 23 (61%) | Best with old pipeline |
-| qwen35-9b-clawd-v9 | 5.6 / 23 (24%) | Regression — bad data (3 wrong task definitions) |
-| qwen35-9b-clawd-v10 | 6.4 / 23 (28%) | Still bad data + wrong validator rules |
-| qwen35-9b-clawd-v11 | *training...* | Clean data, correct task defs, dynamic gen |
+| qwen35-9b-clawd-v9 | 5.6 / 23 (24%) | Regression — wrong Modelfile template |
+| qwen35-9b-clawd-v14 | 11.7 / 23 (51%) | Fixed Modelfile template (explicit Qwen3 chat template) |
+| qwen35-9b-clawd-v15 | 16.1 / 23 (70%) | Fixed seq_len 4096→8192 (long tasks were truncated) |
+| qwen35-9b-clawd-v16 | 16.2 / 23 (70%) | Adversarial data for task_12 (0→100%) |
+| qwen35-9b-clawd-v17 | 15.8 / 23 (69%) | Balanced data, smart analyzer |
+| qwen35-9b-clawd-v18 | *training...* | Orchestrator-driven, analyzer guards |
 
-### Key Lesson: Bad Data Is Worse Than No Data
+### Key Lessons
 
-v9/v10 regressed catastrophically because:
-1. **3 tasks had completely wrong definitions** — task_11 trained "config update" but benchmark tests "create project structure"; task_12 trained "skill search" but benchmark tests "search and replace in files"
-2. **Validator was rejecting correct data** — REQUIRED_TOOLS didn't match what the benchmark actually tests (e.g. requiring `search_emails` for tasks that use `list_files` + `read_file`)
-3. **311 training examples had wrong tool names** — model literally learned to call wrong tools
+1. **The Modelfile template matters more than the data.** Switching from Ollama's `RENDERER qwen3.5` shortcut to the explicit Qwen3 chat template (with `<tools>/<tool_call>` XML blocks) doubled scores from 25% to 50%. Same model weights, same data.
 
-The fix: dynamic data generation that reads task definitions from the actual PinchBench `.md` files (no hardcoded copies), deep validation with Claude semantic checks, and a pilot-validate-refine flow.
+2. **Sequence length truncation silently kills multi-step tasks.** Training at `max_seq_len=4096` truncated long tasks (email triage at ~6K tokens, market research at ~8K tokens). The model learned "read files and stop" because it never saw the write step. Increasing to 8192 fixed tasks 15, 16, 17, 22 from 0% to 88-98%.
+
+3. **Data imbalance causes catastrophic forgetting.** When some tasks had 118 examples and others had 27, the model over-learned the bloated tasks and forgot the small ones. Balanced data (40-50 per task) consistently scores better.
+
+4. **Quality over quantity.** 50 high-quality examples per task (judge score ≥4.5) outperforms 120 mixed-quality examples. The smart data analyzer uses benchmark scores + judge quality + example counts to decide when to stop generating.
 
 Dataset: [huggingface.co/datasets/cptekur/pinchbench-clawd](https://huggingface.co/datasets/cptekur/pinchbench-clawd) (CC BY 4.0)
 
@@ -137,11 +139,36 @@ Data generation reads task definitions directly from PinchBench `.md` files (`da
 4. If GOOD: bulk generate remaining examples
 5. If BAD after 3 attempts: skip task and report
 
-### Hard Training Gates
+### Smart Data Analyzer
 
-The `train` tool has 3 hardcoded gates that cannot be bypassed:
+The data analyzer (`datagen/data_analyzer.py`) replaces hard-coded count caps with signal-based decisions. For each task it considers:
+- **Benchmark score** — how the model actually performs
+- **Judge score** — average LLM quality rating of training examples
+- **Example count** — with a hard ceiling of 80
+
+Recommendations per task:
+| Action | When |
+|--------|------|
+| LEAVE_ALONE | Benchmark ≥80%, or at hard ceiling |
+| GENERATE | Low benchmark + few examples |
+| ADVERSARIAL | Low benchmark despite good data — needs failure-targeted examples |
+| REGENERATE | Low benchmark + low judge score — data quality is bad |
+| TRIM | Too many examples (>100) causing forgetting |
+| INVESTIGATE | Task regressed ≥20% from previous version |
+| INFRASTRUCTURE | 0% benchmark on infra-dependent task (image gen, web search) |
+
+### Training Data Version Control
+
+Training data is checked into git (`data/checked_in/`) so good datasets are never lost:
+```bash
+bash scripts/checkin_data.sh v17 "balanced 1082 examples, scored 69%"
+```
+
+### Training Gates
+
+The `train` tool has 3 gates:
 1. **Coverage**: all 23 tasks must have ≥30 examples
-2. **Quality**: `validate_data` must show 0 critical/high issues
+2. **Quality**: ≥90% of examples must be clean (no critical issues)
 3. **Disk**: root filesystem must have ≥15 GB free
 
 ### Example Session
