@@ -34,6 +34,14 @@ Model version **v{model_version}** scored **{current_score}** on PinchBench (tar
 {judge_summary_json}
 ```
 
+### Version comparison (per-task scores across recent versions)
+
+This shows how each task's score changed across the last 3 training runs. Look for REGRESSIONS — tasks that scored well before but dropped. These indicate data changes that hurt.
+
+```
+{version_comparison}
+```
+
 ### Benchmark log excerpt (last 3000 chars — errors, warnings, timeouts)
 
 ```

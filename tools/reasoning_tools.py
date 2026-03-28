@@ -179,6 +179,75 @@ def _read_benchmark_log(cfg, benchmark_log_path: str | None = None) -> str:
     return ""
 
 
+def _read_version_comparison(cfg) -> str:
+    """Read the last 3 benchmark logs and build a per-task version comparison."""
+    logs_dir = cfg.data_dir.parent / "logs"
+    if not logs_dir.exists():
+        return ""
+
+    log_files = sorted(
+        logs_dir.glob("bench_ollama_qwen35-9b-clawd-v*.log"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )[:3]  # last 3 versions
+
+    if len(log_files) < 2:
+        return ""
+
+    from agents.base import TASK_IDS
+    versions = {}
+
+    for log_file in log_files:
+        # Extract version from filename
+        name = log_file.stem
+        version = name.split("-v")[-1] if "-v" in name else name
+        text = log_file.read_text(errors="replace")
+
+        scores = {}
+        for m in re.finditer(r'Task (\S+): ([\d.]+)/1\.0 \((\d+)%\)', text):
+            task_id = m.group(1)
+            score = float(m.group(2))
+            if task_id in TASK_IDS:
+                scores[task_id] = score
+        if scores:
+            avg = sum(scores.values()) / len(scores) if scores else 0
+            versions[f"v{version}"] = {"avg": round(avg, 3), "scores": scores}
+
+    if len(versions) < 2:
+        return ""
+
+    # Build comparison table
+    lines = ["VERSION COMPARISON (per-task scores):"]
+    ver_names = sorted(versions.keys(), key=lambda v: int(v[1:]) if v[1:].isdigit() else 0)
+
+    header = f"{'Task':<35} " + " ".join(f"{v:>8}" for v in ver_names) + "  Change"
+    lines.append(header)
+    lines.append("-" * len(header))
+
+    for task_id in TASK_IDS:
+        scores = []
+        for v in ver_names:
+            s = versions[v]["scores"].get(task_id, None)
+            scores.append(f"{s:.0%}" if s is not None else "  —  ")
+        # Calculate change between last two versions
+        last_two = [versions[v]["scores"].get(task_id) for v in ver_names[-2:]]
+        if all(s is not None for s in last_two):
+            delta = last_two[1] - last_two[0]
+            change = f"  {delta:+.0%}" if abs(delta) > 0.05 else "  ="
+        else:
+            change = ""
+        lines.append(f"  {task_id:<33} " + " ".join(f"{s:>8}" for s in scores) + change)
+
+    # Averages
+    lines.append("")
+    avg_line = f"  {'AVERAGE':<33} "
+    for v in ver_names:
+        avg_line += f"{versions[v]['avg']:>7.1%} "
+    lines.append(avg_line)
+
+    return "\n".join(lines)
+
+
 # ── diagnose ─────────────────────────────────────────────────────────────────
 
 def diagnose(args: dict, cfg, state) -> dict:
@@ -238,6 +307,11 @@ def diagnose(args: dict, cfg, state) -> dict:
 
         current_score = round(state.avg_score, 3) if state.scores else "N/A"
 
+        # Version comparison across last 3 benchmark logs
+        version_comparison = _read_version_comparison(cfg)
+        if version_comparison:
+            log_print(f"  [diagnose] Built version comparison from {len(version_comparison.splitlines())} lines")
+
         # Safe variable substitution (doesn't break on literal {} in markdown)
         variables = {
             "model_version": str(state.model_version),
@@ -251,6 +325,7 @@ def diagnose(args: dict, cfg, state) -> dict:
             "benchmark_log_excerpt": benchmark_excerpt,
             "bad_examples_summary": bad_examples_summary or "(no bad examples report found)",
             "validator_context": validator_context,
+            "version_comparison": version_comparison or "(only one benchmark log found — no comparison available)",
         }
         prompt = template
         for key, value in variables.items():
