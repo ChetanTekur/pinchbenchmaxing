@@ -643,25 +643,34 @@ def restore_gold_data(args: dict, cfg, state) -> dict:
             path = hf_hub_download(hf_repo, fname, revision=target_revision, repo_type="dataset")
             shutil.copy2(path, str(cfg.data_dir / fname))
 
-        # Count restored data
+        # Count restored data (train + val, matching inspect_data)
         from collections import Counter
+        train_count = 0
+        val_count = 0
         counts = Counter()
-        train_file = cfg.data_dir / "train.jsonl"
-        if train_file.exists():
-            for line in train_file.read_text().splitlines():
-                if line.strip():
-                    try:
-                        counts[json.loads(line).get("task_id", "")] += 1
-                    except json.JSONDecodeError:
-                        pass
+        for fname, label in [("train.jsonl", "train"), ("val.jsonl", "val")]:
+            f = cfg.data_dir / fname
+            if f.exists():
+                for line in f.read_text().splitlines():
+                    if line.strip():
+                        try:
+                            counts[json.loads(line).get("task_id", "")] += 1
+                            if label == "train":
+                                train_count += 1
+                            else:
+                                val_count += 1
+                        except json.JSONDecodeError:
+                            pass
 
-        log_print(f"  [restore_gold_data] Restored {sum(counts.values())} examples across {len(counts)} tasks")
+        log_print(f"  [restore_gold_data] Restored {train_count} train + {val_count} val = {sum(counts.values())} total across {len(counts)} tasks")
 
         return {
             "status": "success",
             "result": {
                 "version": version,
                 "total_examples": sum(counts.values()),
+                "train": train_count,
+                "val": val_count,
                 "tasks": len(counts),
             },
             "cost_usd": 0.0,
