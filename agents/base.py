@@ -143,7 +143,6 @@ class AgentState:
     baseline_task_counts: dict = field(default_factory=dict)  # per-task counts at session start — filter protection
     diagnosis_required:  bool  = False  # set True after benchmark; blocks generation until diagnose runs
     diagnose_count:      int   = 0      # diagnose calls since last benchmark; caps at 2 to prevent analysis paralysis
-    data_checked_in:     bool  = False  # set True after auto-checkin; reset each session
 
     @property
     def avg_score(self) -> float:
@@ -224,7 +223,6 @@ class AgentState:
             "baseline_task_counts": self.baseline_task_counts,
             "diagnosis_required":  self.diagnosis_required,
             "diagnose_count":      self.diagnose_count,
-            "data_checked_in":     self.data_checked_in,
         }
 
     @classmethod
@@ -253,7 +251,6 @@ class AgentState:
             baseline_task_counts= d.get("baseline_task_counts", {}),
             diagnosis_required=   d.get("diagnosis_required", False),
             diagnose_count=       d.get("diagnose_count", 0),
-            data_checked_in=      d.get("data_checked_in", False),
         )
 
 

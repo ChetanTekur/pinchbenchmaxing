@@ -547,25 +547,6 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
             )})
             continue
 
-        # ── Auto-backup: push to HuggingFace before first data modification ──
-        DATA_MODIFYING_TOOLS = {
-            "generate_data", "generate_adversarial", "filter_data",
-            "rebalance_data", "dedup_data", "repair_data",
-        }
-        if tool_name in DATA_MODIFYING_TOOLS and not state.data_checked_in:
-            version = f"v{state.model_version}"
-            score_pct = f"{state.avg_score*100:.0f}%" if state.scores else "no score"
-            log_print(f"[ORCHESTRATOR AGENT] Auto-backup: pushing {version} data to HuggingFace before modification")
-            backup_result = execute_tool("push_hf", {
-                "message": f"Auto-backup {version} ({score_pct}) before data modification",
-            }, cfg, state)
-            if backup_result.get("status") == "success":
-                state.data_checked_in = True
-                log_print(f"[ORCHESTRATOR AGENT] Auto-backup complete: {version} data safe on HuggingFace")
-            else:
-                log_print(f"[ORCHESTRATOR AGENT] Auto-backup failed: {backup_result.get('error', '?')}")
-                # Don't block — backup failure shouldn't stop the pipeline
-
         # Show Claude's reasoning if it explained before calling the tool
         if text_block and text_block.text and text_block.text.strip():
             thinking = text_block.text.strip()
