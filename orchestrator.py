@@ -739,6 +739,43 @@ def main():
             state.last_data_summary = {}
             log_print(f"[ORCHESTRATOR AGENT] Fresh start — all state cleared")
 
+        # ── Gold data restore: if current data is from a regression, roll back ──
+        # Check if we have gold data from the best-scoring version and the
+        # current active data is different (i.e., a later version corrupted it).
+        if state.best_version > 0 and state.model_version > state.best_version:
+            gold_dir = cfg.data_dir / f"gold_v{state.best_version}"
+            # Also check checked_in directory
+            checkin_dir = Path(__file__).parent / "data" / "checked_in" / f"v{state.best_version}"
+            restore_from = None
+            if gold_dir.exists() and (gold_dir / "train.jsonl").exists():
+                restore_from = gold_dir
+            elif checkin_dir.exists() and (checkin_dir / "train.jsonl").exists():
+                restore_from = checkin_dir
+
+            if restore_from:
+                import shutil
+                for fname in ["train.jsonl", "val.jsonl"]:
+                    src = restore_from / fname
+                    dst = cfg.data_dir / fname
+                    if src.exists():
+                        shutil.copy2(str(src), str(dst))
+                log_print(f"[ORCHESTRATOR AGENT] GOLD RESTORE: rolled back to v{state.best_version} data from {restore_from}")
+                log_print(f"[ORCHESTRATOR AGENT] v{state.model_version} regressed — starting from best-known data")
+                # Re-count baseline after restore
+                _baseline = Counter()
+                if cfg.train_file.exists():
+                    for _line in cfg.train_file.read_text().splitlines():
+                        if _line.strip():
+                            try:
+                                _baseline[json.loads(_line).get("task_id", "")] += 1
+                            except json.JSONDecodeError:
+                                pass
+                state.baseline_task_counts = dict(_baseline)
+                log_print(f"[ORCHESTRATOR AGENT] Restored baseline: {sum(_baseline.values())} examples across {len(_baseline)} tasks")
+            else:
+                log_print(f"[ORCHESTRATOR AGENT] WARNING: v{state.model_version} regressed from best v{state.best_version} "
+                          f"but no gold data found at {gold_dir} or {checkin_dir}")
+
         # Seed scratchpad note from CLI
         if args.note:
             state.scratchpad.append({
