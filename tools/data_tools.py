@@ -689,6 +689,34 @@ def restore_gold_data(args: dict, cfg, state) -> dict:
                         except json.JSONDecodeError:
                             pass
 
+        # Prune scores.json to only contain entries matching restored data
+        scores_file = cfg.data_dir / "scores.json"
+        if scores_file.exists():
+            scores = json.loads(scores_file.read_text())
+            before_scores = len(scores)
+
+            # Build set of valid keys from restored train data
+            valid_keys = set()
+            train_file = cfg.data_dir / "train.jsonl"
+            if train_file.exists():
+                for line in train_file.read_text().splitlines():
+                    if not line.strip():
+                        continue
+                    try:
+                        ex = json.loads(line)
+                        task_id = ex.get("task_id", "")
+                        msgs = ex.get("messages", [])
+                        user_msgs = [m for m in msgs if m.get("role") == "user"]
+                        user_text = user_msgs[0]["content"][:80] if user_msgs else ""
+                        valid_keys.add(f"{task_id}|{user_text}")
+                        valid_keys.add(f"{task_id}::{user_text}")
+                    except (json.JSONDecodeError, IndexError, KeyError):
+                        pass
+
+            pruned = {k: v for k, v in scores.items() if k in valid_keys}
+            scores_file.write_text(json.dumps(pruned, indent=2))
+            log_print(f"  [restore_gold_data] Pruned scores.json: {before_scores} → {len(pruned)} (removed {before_scores - len(pruned)} stale entries)")
+
         log_print(f"  [restore_gold_data] Restored {train_count} train + {val_count} val = {sum(counts.values())} total across {len(counts)} tasks")
 
         return {
