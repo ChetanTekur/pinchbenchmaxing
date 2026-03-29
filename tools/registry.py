@@ -9,7 +9,7 @@ from .data_tools import (
     inspect_data, check_diversity, generate_data, generate_adversarial,
     score_data, filter_data, repair_data,
     dedup_data, rebalance_data, snapshot, push_hf,
-    validate_data,
+    validate_data, restore_gold_data,
 )
 from .training_tools import (
     train, convert, register, validate_model, benchmark, check_disk,
@@ -353,6 +353,26 @@ TOOL_SCHEMAS = [
         },
     },
     {
+        "name": "restore_gold_data",
+        "description": (
+            "Restore training data from the best-scoring version. "
+            "Downloads from HuggingFace (or local cache) and overwrites "
+            "the current train.jsonl and val.jsonl. Use after diagnosing "
+            "a regression to roll back to proven good data before making "
+            "targeted improvements."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "type": "integer",
+                    "description": "Version to restore (defaults to best_version from state).",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "push_hf",
         "description": (
             "Push the current dataset (train.jsonl, val.jsonl, scores.json) "
@@ -436,6 +456,7 @@ _DISPATCH = {
     "rebalance_data":       rebalance_data,
     "validate_data":        validate_data,
     "snapshot":             snapshot,
+    "restore_gold_data":    restore_gold_data,
     "benchmark":            benchmark,
     "train":                train,
     "convert":              convert,

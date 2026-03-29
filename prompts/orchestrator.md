@@ -31,6 +31,7 @@ You operate in a loop. Each turn you receive the current state (scores, dataset 
 | `train` | Fine-tune the model. Has 3 hardcoded gates: coverage (≥30/task), quality (0 critical issues), disk (≥15GB). Params: `version` (int). |
 | `convert` | Convert to GGUF. Params: `version` (int). |
 | `register` | Register GGUF in Ollama. Params: `version` (int), `model_name` (str). |
+| `restore_gold_data` | Roll back training data to the best-scoring version from HuggingFace. Use after diagnosing a regression. Params: `version` (int, optional — defaults to best). |
 | `snapshot` | Save dataset snapshot before destructive ops. Params: `label` (str). |
 | `push_hf` | Push dataset to HuggingFace. Params: `message` (str). |
 | `check_disk` | Report free disk space. |
@@ -241,10 +242,11 @@ The `train` tool refused. This is recoverable:
 
 ### Score regression after training
 
-1. Call `validate_data` — bad data is the #1 cause of regression
-2. Compare per-task scores: which tasks got worse?
-3. `diagnose` the regressed tasks
-4. If a task scored well before you added training data for it, the new data was bad — consider removing it
+1. Call `diagnose` — understand what the model is doing wrong NOW vs what it did right BEFORE
+2. Compare per-task scores: which tasks got worse? Which got better?
+3. If the regression is broad (many tasks worse), call `restore_gold_data` to roll back to the best version's dataset, then make targeted improvements
+4. If the regression is narrow (1-2 tasks), fix those specific tasks without rolling back
+5. If a task scored well before you added training data for it, the new data was bad — consider removing it
 
 ### Near target — within 5% of {target_score:.0%}
 

@@ -614,6 +614,85 @@ def rebalance_data(args: dict, cfg, state) -> dict:
         return {"status": "error", "error": str(e)}
 
 
+# ── restore_gold_data ────────────────────────────────────────────────────────
+
+def restore_gold_data(args: dict, cfg, state) -> dict:
+    """Restore training data from the best-scoring version via HuggingFace."""
+    try:
+        version = args.get("version", state.best_version)
+        if not version or version <= 0:
+            return {"status": "error", "error": "No best version to restore from"}
+
+        gold_dir = cfg.data_dir / f"gold_v{version}"
+
+        # Try local cache first
+        if gold_dir.exists() and (gold_dir / "train.jsonl").exists():
+            for fname in ["train.jsonl", "val.jsonl"]:
+                src = gold_dir / fname
+                dst = cfg.data_dir / fname
+                if src.exists():
+                    shutil.copy2(str(src), str(dst))
+            log_print(f"  [restore_gold_data] Restored v{version} from local cache {gold_dir}")
+        else:
+            # Download from HuggingFace
+            log_print(f"  [restore_gold_data] Downloading v{version} from HuggingFace...")
+            try:
+                from huggingface_hub import HfApi, hf_hub_download
+                api = HfApi()
+                hf_repo = cfg.huggingface.dataset_repo
+
+                commits = api.list_repo_commits(hf_repo, repo_type="dataset")
+                target_revision = None
+                for commit in commits:
+                    if f"Pre-v{version} " in (commit.title or ""):
+                        target_revision = commit.commit_id
+                        break
+
+                if not target_revision:
+                    return {"status": "error", "error": f"No 'Pre-v{version}' commit found on HuggingFace"}
+
+                for fname in ["train.jsonl", "val.jsonl"]:
+                    path = hf_hub_download(hf_repo, fname, revision=target_revision, repo_type="dataset")
+                    shutil.copy2(path, str(cfg.data_dir / fname))
+
+                # Cache locally
+                gold_dir.mkdir(parents=True, exist_ok=True)
+                for fname in ["train.jsonl", "val.jsonl"]:
+                    src = cfg.data_dir / fname
+                    if src.exists():
+                        shutil.copy2(str(src), str(gold_dir / fname))
+
+                log_print(f"  [restore_gold_data] Downloaded and cached v{version}")
+            except Exception as e:
+                return {"status": "error", "error": f"HF download failed: {e}"}
+
+        # Count restored data
+        from collections import Counter
+        counts = Counter()
+        train_file = cfg.data_dir / "train.jsonl"
+        if train_file.exists():
+            for line in train_file.read_text().splitlines():
+                if line.strip():
+                    try:
+                        counts[json.loads(line).get("task_id", "")] += 1
+                    except json.JSONDecodeError:
+                        pass
+
+        log_print(f"  [restore_gold_data] Restored {sum(counts.values())} examples across {len(counts)} tasks")
+
+        return {
+            "status": "success",
+            "result": {
+                "version": version,
+                "total_examples": sum(counts.values()),
+                "tasks": len(counts),
+            },
+            "cost_usd": 0.0,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 # ── snapshot ─────────────────────────────────────────────────────────────────
 
 def snapshot(args: dict, cfg, state) -> dict:
