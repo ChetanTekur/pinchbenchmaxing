@@ -9,7 +9,7 @@ from .data_tools import (
     inspect_data, check_diversity, generate_data, generate_adversarial,
     score_data, filter_data, repair_data,
     dedup_data, rebalance_data, snapshot, push_hf,
-    validate_data,
+    validate_data, checkin_data,
 )
 from .training_tools import (
     train, convert, register, validate_model, benchmark, check_disk,
@@ -401,6 +401,28 @@ TOOL_SCHEMAS = [
         },
     },
     {
+        "name": "checkin_data",
+        "description": (
+            "Check in the current training data to git for durable backup. "
+            "Copies train.jsonl, val.jsonl, scores.json to data/checked_in/<version>/, "
+            "commits, and pushes to remote. Use before any destructive data operation."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "type": "string",
+                    "description": "Version label (e.g. 'v21'). Defaults to current model version.",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Short description of this data state.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "request_approval",
         "description": (
             "Pause execution and request human approval before proceeding "
@@ -436,6 +458,7 @@ _DISPATCH = {
     "rebalance_data":       rebalance_data,
     "validate_data":        validate_data,
     "snapshot":             snapshot,
+    "checkin_data":         checkin_data,
     "benchmark":            benchmark,
     "train":                train,
     "convert":              convert,

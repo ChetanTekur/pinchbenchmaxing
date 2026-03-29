@@ -142,6 +142,9 @@ def _format_result(tool_name: str, r: dict) -> str:
     elif tool_name == "snapshot":
         return f"saved to {r.get('path', '?')}"
 
+    elif tool_name == "checkin_data":
+        return f"checked in {r.get('version', '?')} ({r.get('total_train', '?')} examples) to git"
+
     elif tool_name == "push_hf":
         return f"pushed {r.get('files_pushed', '?')} files to {r.get('repo', '?')}"
 
@@ -498,6 +501,26 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
                 f"Understand WHY tasks are failing before generating data. Call diagnose now."
             )})
             continue
+
+        # ── Auto-checkin gate: save data to git before first modification ──
+        DATA_MODIFYING_TOOLS = {
+            "generate_data", "generate_adversarial", "filter_data",
+            "rebalance_data", "dedup_data", "repair_data",
+        }
+        if tool_name in DATA_MODIFYING_TOOLS and not state.data_checked_in:
+            version = f"v{state.model_version}"
+            score_pct = f"{state.avg_score*100:.0f}%" if state.scores else "no score"
+            log_print(f"[ORCHESTRATOR AGENT] Auto-checkin: saving {version} data to git before modification")
+            checkin_result = execute_tool("checkin_data", {
+                "version": version,
+                "description": f"auto-checkin before data modification ({score_pct})",
+            }, cfg, state)
+            if checkin_result.get("status") == "success":
+                state.data_checked_in = True
+                log_print(f"[ORCHESTRATOR AGENT] Auto-checkin complete: {version} data safe in git")
+            else:
+                log_print(f"[ORCHESTRATOR AGENT] Auto-checkin failed: {checkin_result.get('error', '?')}")
+                # Don't block — checkin failure shouldn't stop the pipeline
 
         # Show Claude's reasoning if it explained before calling the tool
         if text_block and text_block.text and text_block.text.strip():
