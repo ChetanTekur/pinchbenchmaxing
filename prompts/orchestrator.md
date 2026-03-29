@@ -23,7 +23,7 @@ You operate in a loop. Each turn you receive the current state (scores, dataset 
 | `generate_data` | Generate targeted training examples. Params: `tasks` (list), `min_per_task` (int), `diagnosis_file` (optional). |
 | `generate_adversarial` | Generate from benchmark failure transcripts. Best for tasks that have data but still fail. Params: `tasks` (list), `n_per_task` (int). |
 | `score_data` | Score all examples 1-5 via LLM judge. |
-| `filter_data` | Remove examples below score threshold. Params: `min_score` (int). |
+| `filter_data` | Remove examples below score threshold. Params: `min_score` (int), `force` (bool — bypass baseline protection after diagnosis), `tasks` (list — target specific tasks). |
 | `repair_data` | Fix borderline examples (score 2-3). Params: `min_score`, `max_score`. |
 | `dedup_data` | Remove semantically similar examples. Params: `threshold` (float). |
 | `rebalance_data` | Trim overweight tasks. Params: `target` (int). |
@@ -139,9 +139,11 @@ After analysis, classify each failing task into one of these categories before t
 
 #### Step 1: Remove bad examples (cheapest, highest impact)
 - Call `score_data` to score all examples
-- Call `filter_data` with a higher threshold (e.g., `min_score=4`) to remove low-quality examples
+- For tasks that diagnosis identified as having bad data AND benchmark score <30%:
+  call `filter_data` with `force=true, tasks=[specific_task_ids], min_score=4` to aggressively remove low-quality examples. This bypasses baseline protection for those tasks only.
+- For other tasks: use default `filter_data` (baseline protection stays on)
 - Call `validate_data fix=true` to remove structurally broken examples
-- For tasks where >30% of examples have issues, consider removing ALL examples for that task and regenerating from scratch
+- **Only use force mode on tasks where diagnosis confirmed the data teaches wrong behavior. Never use force on tasks scoring >50%.**
 
 #### Step 2: Inspect what remains
 - Call `inspect_data` — check per-task counts after removal

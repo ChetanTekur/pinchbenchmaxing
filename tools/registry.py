@@ -149,7 +149,10 @@ TOOL_SCHEMAS = [
     {
         "name": "filter_data",
         "description": (
-            "Filter training data, removing examples below the minimum judge score."
+            "Filter training data, removing examples below the minimum judge score. "
+            "Default mode respects baseline protection (won't remove pre-session data). "
+            "Use force=true with specific tasks after diagnosis confirms bad data — "
+            "this bypasses baseline protection for those tasks only (hard floor: 15/task)."
         ),
         "input_schema": {
             "type": "object",
@@ -158,6 +161,16 @@ TOOL_SCHEMAS = [
                     "type": "integer",
                     "description": "Minimum score threshold (1-5). Examples below this are removed.",
                     "default": 3,
+                },
+                "force": {
+                    "type": "boolean",
+                    "description": "Bypass baseline protection. Use ONLY after diagnosis confirms bad data for specific tasks.",
+                    "default": False,
+                },
+                "tasks": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Only filter these task IDs (others untouched). Use with force for surgical cleanup.",
                 },
             },
             "required": [],
