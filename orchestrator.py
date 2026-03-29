@@ -142,14 +142,59 @@ def _format_result(tool_name: str, r: dict) -> str:
     elif tool_name == "snapshot":
         return f"saved to {r.get('path', '?')}"
 
-    elif tool_name == "checkin_data":
-        return f"checked in {r.get('version', '?')} ({r.get('total_train', '?')} examples) to git"
-
     elif tool_name == "push_hf":
         return f"pushed {r.get('files_pushed', '?')} files to {r.get('repo', '?')}"
 
     # Fallback
     return ", ".join(f"{k}={v}" for k, v in list(r.items())[:5])[:200]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HUGGINGFACE RESTORE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _restore_from_hf(repo: str, best_version: int, data_dir: Path) -> bool:
+    """Download training data from HuggingFace for a specific version.
+
+    Searches commit history for "Pre-v{N}" messages and downloads
+    train.jsonl + val.jsonl from that revision.
+    """
+    try:
+        from huggingface_hub import HfApi, hf_hub_download
+        api = HfApi()
+
+        # Find the commit with "Pre-v{N}" in the message
+        commits = api.list_repo_commits(repo, repo_type="dataset")
+        target_revision = None
+        for commit in commits:
+            if f"Pre-v{best_version} " in (commit.title or ""):
+                target_revision = commit.commit_id
+                break
+
+        if not target_revision:
+            # Try "Pre-v{N+1}" — the data that trained v{N} was pushed
+            # before training v{N}, labeled as "Pre-v{N}"
+            log_print(f"  [hf_restore] No 'Pre-v{best_version}' commit found, trying 'Pre-v{best_version + 1}'")
+            for commit in commits:
+                if f"Pre-v{best_version + 1} " in (commit.title or ""):
+                    target_revision = commit.commit_id
+                    break
+
+        if not target_revision:
+            return False
+
+        log_print(f"  [hf_restore] Found revision {target_revision[:8]} for v{best_version}")
+
+        import shutil
+        for fname in ["train.jsonl", "val.jsonl"]:
+            path = hf_hub_download(repo, fname, revision=target_revision, repo_type="dataset")
+            shutil.copy2(path, str(data_dir / fname))
+            log_print(f"  [hf_restore] Downloaded {fname}")
+
+        return True
+    except Exception as e:
+        log_print(f"  [hf_restore] Error: {e}")
+        return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -502,7 +547,7 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
             )})
             continue
 
-        # ── Auto-checkin gate: save data to git before first modification ──
+        # ── Auto-backup: push to HuggingFace before first data modification ──
         DATA_MODIFYING_TOOLS = {
             "generate_data", "generate_adversarial", "filter_data",
             "rebalance_data", "dedup_data", "repair_data",
@@ -510,17 +555,16 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
         if tool_name in DATA_MODIFYING_TOOLS and not state.data_checked_in:
             version = f"v{state.model_version}"
             score_pct = f"{state.avg_score*100:.0f}%" if state.scores else "no score"
-            log_print(f"[ORCHESTRATOR AGENT] Auto-checkin: saving {version} data to git before modification")
-            checkin_result = execute_tool("checkin_data", {
-                "version": version,
-                "description": f"auto-checkin before data modification ({score_pct})",
+            log_print(f"[ORCHESTRATOR AGENT] Auto-backup: pushing {version} data to HuggingFace before modification")
+            backup_result = execute_tool("push_hf", {
+                "message": f"Auto-backup {version} ({score_pct}) before data modification",
             }, cfg, state)
-            if checkin_result.get("status") == "success":
+            if backup_result.get("status") == "success":
                 state.data_checked_in = True
-                log_print(f"[ORCHESTRATOR AGENT] Auto-checkin complete: {version} data safe in git")
+                log_print(f"[ORCHESTRATOR AGENT] Auto-backup complete: {version} data safe on HuggingFace")
             else:
-                log_print(f"[ORCHESTRATOR AGENT] Auto-checkin failed: {checkin_result.get('error', '?')}")
-                # Don't block — checkin failure shouldn't stop the pipeline
+                log_print(f"[ORCHESTRATOR AGENT] Auto-backup failed: {backup_result.get('error', '?')}")
+                # Don't block — backup failure shouldn't stop the pipeline
 
         # Show Claude's reasoning if it explained before calling the tool
         if text_block and text_block.text and text_block.text.strip():
@@ -739,42 +783,54 @@ def main():
             state.last_data_summary = {}
             log_print(f"[ORCHESTRATOR AGENT] Fresh start — all state cleared")
 
-        # ── Gold data restore: if current data is from a regression, roll back ──
-        # Check if we have gold data from the best-scoring version and the
-        # current active data is different (i.e., a later version corrupted it).
+        # ── Gold data restore: if regression detected, roll back from HuggingFace ──
+        # HuggingFace dataset repo has every version's pre-training data with
+        # commit messages like "Pre-v21 training data: ...". On regression,
+        # download the best version's data automatically.
         if state.best_version > 0 and state.model_version > state.best_version:
-            gold_dir = cfg.data_dir / f"gold_v{state.best_version}"
-            # Also check checked_in directory
-            checkin_dir = Path(__file__).parent / "data" / "checked_in" / f"v{state.best_version}"
-            restore_from = None
-            if gold_dir.exists() and (gold_dir / "train.jsonl").exists():
-                restore_from = gold_dir
-            elif checkin_dir.exists() and (checkin_dir / "train.jsonl").exists():
-                restore_from = checkin_dir
+            best_v = state.best_version
+            gold_dir = cfg.data_dir / f"gold_v{best_v}"
 
-            if restore_from:
+            if gold_dir.exists() and (gold_dir / "train.jsonl").exists():
+                # Local gold copy exists — use it (fastest)
                 import shutil
                 for fname in ["train.jsonl", "val.jsonl"]:
-                    src = restore_from / fname
+                    src = gold_dir / fname
                     dst = cfg.data_dir / fname
                     if src.exists():
                         shutil.copy2(str(src), str(dst))
-                log_print(f"[ORCHESTRATOR AGENT] GOLD RESTORE: rolled back to v{state.best_version} data from {restore_from}")
-                log_print(f"[ORCHESTRATOR AGENT] v{state.model_version} regressed — starting from best-known data")
-                # Re-count baseline after restore
+                log_print(f"[ORCHESTRATOR AGENT] GOLD RESTORE: rolled back to v{best_v} data from {gold_dir}")
+            else:
+                # Download from HuggingFace — find the Pre-v{N} commit
+                log_print(f"[ORCHESTRATOR AGENT] Restoring v{best_v} gold data from HuggingFace...")
+                try:
+                    hf_repo = cfg.huggingface.dataset_repo
+                    restored = _restore_from_hf(hf_repo, best_v, cfg.data_dir)
+                    if restored:
+                        log_print(f"[ORCHESTRATOR AGENT] GOLD RESTORE: downloaded v{best_v} data from HuggingFace")
+                        # Save locally so next time we don't need to download
+                        gold_dir.mkdir(parents=True, exist_ok=True)
+                        import shutil
+                        for fname in ["train.jsonl", "val.jsonl"]:
+                            src = cfg.data_dir / fname
+                            if src.exists():
+                                shutil.copy2(str(src), str(gold_dir / fname))
+                    else:
+                        log_print(f"[ORCHESTRATOR AGENT] WARNING: could not find v{best_v} data on HuggingFace")
+                except Exception as e:
+                    log_print(f"[ORCHESTRATOR AGENT] WARNING: HF restore failed: {e}")
+
+            # Re-count baseline after restore
+            if (cfg.data_dir / "train.jsonl").exists():
                 _baseline = Counter()
-                if cfg.train_file.exists():
-                    for _line in cfg.train_file.read_text().splitlines():
-                        if _line.strip():
-                            try:
-                                _baseline[json.loads(_line).get("task_id", "")] += 1
-                            except json.JSONDecodeError:
-                                pass
+                for _line in cfg.train_file.read_text().splitlines():
+                    if _line.strip():
+                        try:
+                            _baseline[json.loads(_line).get("task_id", "")] += 1
+                        except json.JSONDecodeError:
+                            pass
                 state.baseline_task_counts = dict(_baseline)
                 log_print(f"[ORCHESTRATOR AGENT] Restored baseline: {sum(_baseline.values())} examples across {len(_baseline)} tasks")
-            else:
-                log_print(f"[ORCHESTRATOR AGENT] WARNING: v{state.model_version} regressed from best v{state.best_version} "
-                          f"but no gold data found at {gold_dir} or {checkin_dir}")
 
         # Seed scratchpad note from CLI
         if args.note:
