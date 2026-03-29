@@ -141,6 +141,8 @@ class AgentState:
     scratchpad:          list  = field(default_factory=list)  # [{timestamp, note}] — agent's working memory
     last_data_summary:   dict  = field(default_factory=dict)  # cached inspect_data result
     baseline_task_counts: dict = field(default_factory=dict)  # per-task counts at session start — filter protection
+    diagnosis_required:  bool  = False  # set True after benchmark; blocks generation until diagnose runs
+    diagnose_count:      int   = 0      # diagnose calls since last benchmark; caps at 2 to prevent analysis paralysis
 
     @property
     def avg_score(self) -> float:
@@ -219,6 +221,8 @@ class AgentState:
             "scratchpad":          self.scratchpad,
             "last_data_summary":   self.last_data_summary,
             "baseline_task_counts": self.baseline_task_counts,
+            "diagnosis_required":  self.diagnosis_required,
+            "diagnose_count":      self.diagnose_count,
         }
 
     @classmethod
@@ -245,6 +249,8 @@ class AgentState:
             scratchpad=           d.get("scratchpad", []),
             last_data_summary=    d.get("last_data_summary", {}),
             baseline_task_counts= d.get("baseline_task_counts", {}),
+            diagnosis_required=   d.get("diagnosis_required", False),
+            diagnose_count=       d.get("diagnose_count", 0),
         )
 
 

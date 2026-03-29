@@ -240,6 +240,15 @@ def build_turn_context(state: AgentState, cfg) -> str:
             parts.append("✓ All 23 tasks have ≥40 examples")
         data_status = "\n  ".join(parts)
 
+    # Diagnosis gate status
+    gate_text = ""
+    if state.diagnosis_required:
+        gate_text = (
+            "\n## DIAGNOSIS REQUIRED\n"
+            "generate_data and generate_adversarial are BLOCKED until you call `diagnose`.\n"
+            "Understand WHY tasks are failing before generating more data.\n"
+        )
+
     return f"""## Current State
 
 Model: v{state.model_version} ({state.current_ollama_model or 'none'})
@@ -248,7 +257,7 @@ Best ever: {state.best_avg_score:.3f} (v{state.best_version})
 Target: {cfg.loop.target_score}
 Iteration: {state.iteration}
 Budget remaining: ${budget_remaining:.2f}
-
+{gate_text}
 ## Data Status
   {data_status}
 
@@ -355,6 +364,21 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
     system_prompt = build_system_prompt(cfg)
     consecutive_failures = 0
 
+    # ── Stateful conversation history ─────────────────────────────────────
+    # Instead of a fresh single-turn call each time, we maintain a multi-turn
+    # conversation so Claude remembers its diagnoses, hypotheses, and decisions.
+    messages = []
+
+    # Tools that are blocked until diagnose runs after a benchmark
+    GENERATION_TOOLS = {"generate_data", "generate_adversarial"}
+    MAX_DIAGNOSE_PER_CYCLE = 2  # prevent analysis paralysis
+
+    # If scores exist at session start (seeded via --log/--scores), require diagnosis
+    if state.scores and any(s == 0.0 for s in state.scores.values()):
+        state.diagnosis_required = True
+        state.diagnose_count = 0
+        log_print(f"[ORCHESTRATOR AGENT] Diagnosis required: seeded scores have zero-score tasks")
+
     log_print(f"{'='*62}")
     log_print(f"  ORCHESTRATOR AGENT")
     log_print(f"  Claude model : {model}")
@@ -363,6 +387,7 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
     log_print(f"  Dry run      : {dry_run}")
     log_print(f"  Target       : {cfg.loop.target_score:.0%}")
     log_print(f"  Current score: {state.avg_score:.1%}")
+    log_print(f"  Stateful     : True (multi-turn conversation)")
     log_print(f"{'='*62}")
 
     for turn in range(1, max_actions + 1):
@@ -388,31 +413,44 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
                 log_print(f"[ORCHESTRATOR AGENT] Fix data issues manually, then restart.")
                 break
 
-        # ── Call Claude ────────────────────────────────────────────────────
+        # ── Build turn context ─────────────────────────────────────────────
         turn_context = build_turn_context(state, cfg)
 
         log_print(f"\n{'─'*62}")
         log_print(f"  TURN {turn}/{max_actions}  (budget: ${budget_remaining:.2f})")
         log_print(f"{'─'*62}")
 
+        # Stateful: first turn sends context as user message;
+        # subsequent turns were already extended with tool_result + next user nudge
+        if not messages:
+            messages.append({"role": "user", "content": turn_context})
+        # (subsequent turns: messages already extended after tool execution below)
+
+        # ── Call Claude (stateful — full conversation history) ─────────────
+        # Estimate cost based on conversation length (grows with turns)
+        # Rough: ~$0.003/1k input tokens for Sonnet
+        input_chars = sum(
+            len(str(m.get("content", ""))) for m in messages
+        ) + len(system_prompt)
+        est_input_tokens = input_chars / 4  # rough char-to-token ratio
+        est_cost = est_input_tokens / 1000 * 0.003 + 0.015  # input + ~1k output
+        state.budget_spent_usd += est_cost
+
         try:
             response = client.messages.create(
                 model=model,
                 max_tokens=1024,
                 system=system_prompt,
-                messages=[{"role": "user", "content": turn_context}],
+                messages=messages,
                 tools=TOOL_SCHEMAS,
             )
         except Exception as e:
             log_print(f"[ORCHESTRATOR AGENT] Claude API error: {e}")
             consecutive_failures += 1
+            # On API error, don't corrupt messages — just retry
             continue
 
-        # Track orchestrator API cost (~$0.03 per turn)
-        state.budget_spent_usd += 0.03
-
         # ── Process response ───────────────────────────────────────────────
-        # Check if Claude returned text (DONE signal) or a tool call
         tool_use_block = None
         text_block = None
 
@@ -440,16 +478,30 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
             if text_block:
                 for line in text_block.text.strip().splitlines():
                     log_print(f"[ORCHESTRATOR AGENT] {line}")
+            # Add as assistant message so conversation continues
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": "Please call a tool or respond with DONE."})
             continue
 
-        # ── Execute tool ───────────────────────────────────────────────────
+        # ── Diagnose gate: block generation until diagnosis runs ───────────
         tool_name = tool_use_block.name
         tool_args = tool_use_block.input or {}
+
+        if tool_name in GENERATION_TOOLS and state.diagnosis_required:
+            log_print(f"[ORCHESTRATOR AGENT] BLOCKED: {tool_name} requires diagnosis first.")
+            log_print(f"[ORCHESTRATOR AGENT] Call 'diagnose' to understand WHY tasks are failing before generating data.")
+            # Feed the block back into the conversation so Claude adjusts
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": (
+                f"BLOCKED: {tool_name} is not allowed until you call 'diagnose' first. "
+                f"You have {MAX_DIAGNOSE_PER_CYCLE - state.diagnose_count} diagnose calls remaining this cycle. "
+                f"Understand WHY tasks are failing before generating data. Call diagnose now."
+            )})
+            continue
 
         # Show Claude's reasoning if it explained before calling the tool
         if text_block and text_block.text and text_block.text.strip():
             thinking = text_block.text.strip()
-            # Show full reasoning, not truncated
             for line in thinking.splitlines():
                 log_print(f"[ORCHESTRATOR AGENT] Thinking: {line}")
 
@@ -478,17 +530,8 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
             log_print(f"[ORCHESTRATOR AGENT] FAILED: {error_msg[:300]}")
             result_summary = f"ERROR: {error_msg[:200]}"
 
-            # Auto-write scratchpad note on failure so next turn sees it
-            auto_note = f"{tool_name} FAILED: {error_msg[:150]}"
             if "BLOCKED" in error_msg:
-                auto_note += " → FIX: call generate_data for the listed tasks"
-                consecutive_failures -= 1  # BLOCKED is recoverable, don't count it
-            elif "out of memory" in error_msg.lower() or "cuda" in error_msg.lower():
-                auto_note += " → FIX: may need smaller batch_size or seq_len"
-            state.scratchpad.append({
-                "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
-                "note": auto_note,
-            })
+                consecutive_failures -= 1  # BLOCKED is recoverable
         else:
             consecutive_failures = 0
             r = result.get("result", {})
@@ -502,29 +545,73 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
         state.action_history.append({
             "turn": turn,
             "action": tool_name,
-            "args": {k: str(v)[:50] for k, v in tool_args.items()},  # truncate for storage
+            "args": {k: str(v)[:50] for k, v in tool_args.items()},
             "result_summary": result_summary[:200],
             "status": status,
             "cost_usd": cost,
             "timestamp": datetime.utcnow().isoformat(),
         })
 
-        # Some tools update state directly (benchmark updates scores, train updates version)
-        # The tool implementations handle this via the state object passed to them
+        # ── Diagnose gate state transitions ────────────────────────────────
+
+        # After benchmark: require diagnosis before any generation
+        if tool_name == "benchmark" and status == "success":
+            zeros = [t for t, s in state.scores.items() if s == 0.0]
+            if zeros:
+                state.diagnosis_required = True
+                state.diagnose_count = 0
+                log_print(f"[ORCHESTRATOR AGENT] Diagnosis gate ON: {len(zeros)} zero-score tasks. "
+                          f"Must call diagnose before generate_data/generate_adversarial.")
+
+        # After diagnose: count it, unlock generation when done
+        if tool_name == "diagnose" and status == "success":
+            state.diagnose_count += 1
+            if state.diagnose_count >= MAX_DIAGNOSE_PER_CYCLE:
+                state.diagnosis_required = False
+                log_print(f"[ORCHESTRATOR AGENT] Diagnosis gate OFF: {state.diagnose_count} diagnoses complete. Generation unlocked.")
+            else:
+                # After first diagnose, also unlock — the point is at least one diagnosis ran.
+                # Keep the flag so a second diagnose is allowed but not required.
+                state.diagnosis_required = False
+                log_print(f"[ORCHESTRATOR AGENT] Diagnosis gate OFF: diagnosis complete. Generation unlocked.")
 
         # ── Score regression check after benchmark ────────────────────────
         if tool_name == "benchmark" and status == "success" and state.best_avg_score > 0:
             regression_pct = (state.best_avg_score - state.avg_score) / state.best_avg_score * 100
             threshold = cfg.orchestrator.auto_pause.score_regression_pct
             if regression_pct > threshold:
-                log_print(f"\n[ORCHESTRATOR AGENT] ⚠ SCORE REGRESSION: {regression_pct:.1f}% "
+                log_print(f"\n[ORCHESTRATOR AGENT] SCORE REGRESSION: {regression_pct:.1f}% "
                           f"below best ({state.best_avg_score:.3f} → {state.avg_score:.3f})")
-                state.scratchpad.append({
-                    "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
-                    "note": f"REGRESSION {regression_pct:.1f}%: score dropped from "
-                            f"{state.best_avg_score:.3f} to {state.avg_score:.3f}. "
-                            f"Diagnose before continuing. Do NOT blindly retrain.",
-                })
+
+        # ── Extend conversation with tool result (stateful) ───────────────
+        # Add Claude's response (with tool_use) as assistant message
+        messages.append({"role": "assistant", "content": response.content})
+
+        # Add tool result as user message (Anthropic tool_result format)
+        tool_result_content = json.dumps(result, default=str)
+        # Truncate very large results to avoid blowing up context
+        if len(tool_result_content) > 8000:
+            tool_result_content = tool_result_content[:8000] + "\n... (truncated)"
+        messages.append({
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_block.id,
+                    "content": tool_result_content,
+                }
+            ],
+        })
+
+        # ── Context window management ──────────────────────────────────────
+        # If conversation gets too long, compress old turns to prevent
+        # context overflow while keeping recent context intact.
+        if len(messages) > 40:
+            # Keep first message (initial context) + last 20 messages
+            kept = [messages[0]] + messages[-20:]
+            n_dropped = len(messages) - len(kept)
+            log_print(f"[ORCHESTRATOR AGENT] Context compressed: dropped {n_dropped} old messages, keeping {len(kept)}")
+            messages = kept
 
         save_state(state, state_file)
 
