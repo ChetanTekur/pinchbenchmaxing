@@ -197,13 +197,21 @@ def _decide(signals: TaskSignals) -> tuple[Recommendation, str]:
     judge = signals.judge_score
     count = signals.example_count
 
-    # 0. HARD CEILING — never exceed this regardless of quality/benchmark
+    # 0. HARD CEILING — but allow regeneration if task is failing badly
     HARD_CEILING = 80
     if count >= HARD_CEILING:
         if bench < BENCH_MID_LO and count > COUNT_BLOAT:
             return (
                 Recommendation.TRIM,
-                f"Hard ceiling: {count} examples (>{HARD_CEILING}). Trim to ~{COUNT_HIGH}."
+                f"Hard ceiling: {count} examples (>{HARD_CEILING}) but bench={bench:.0%}. "
+                f"Trim bad examples to ~{COUNT_HIGH}, then regenerate."
+            )
+        if bench < BENCH_MID_LO:
+            # Task has lots of data but still fails — data quality is the problem
+            return (
+                Recommendation.REGENERATE,
+                f"Hard ceiling ({count} examples) but bench only {bench:.0%}. "
+                f"Data quality is bad — trim and regenerate, don't add more."
             )
         return (
             Recommendation.LEAVE_ALONE,
