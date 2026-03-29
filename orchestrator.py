@@ -150,6 +150,25 @@ def _format_result(tool_name: str, r: dict) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _recalc_baseline(cfg, state) -> None:
+    """Recount per-task examples and update baseline_task_counts."""
+    from collections import Counter
+    baseline = Counter()
+    if cfg.train_file.exists():
+        for line in cfg.train_file.read_text().splitlines():
+            if line.strip():
+                try:
+                    baseline[json.loads(line).get("task_id", "")] += 1
+                except json.JSONDecodeError:
+                    pass
+    state.baseline_task_counts = dict(baseline)
+    log_print(f"[ORCHESTRATOR AGENT] Baseline: {sum(baseline.values())} examples across {len(baseline)} tasks")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # HUGGINGFACE RESTORE
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -170,15 +189,6 @@ def _restore_from_hf(repo: str, best_version: int, data_dir: Path) -> bool:
             if f"Pre-v{best_version} " in (commit.title or ""):
                 target_revision = commit.commit_id
                 break
-
-        if not target_revision:
-            # Try "Pre-v{N+1}" — the data that trained v{N} was pushed
-            # before training v{N}, labeled as "Pre-v{N}"
-            log_print(f"  [hf_restore] No 'Pre-v{best_version}' commit found, trying 'Pre-v{best_version + 1}'")
-            for commit in commits:
-                if f"Pre-v{best_version + 1} " in (commit.title or ""):
-                    target_revision = commit.commit_id
-                    break
 
         if not target_revision:
             return False
@@ -475,15 +485,6 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
         # (subsequent turns: messages already extended after tool execution below)
 
         # ── Call Claude (stateful — full conversation history) ─────────────
-        # Estimate cost based on conversation length (grows with turns)
-        # Rough: ~$0.003/1k input tokens for Sonnet
-        input_chars = sum(
-            len(str(m.get("content", ""))) for m in messages
-        ) + len(system_prompt)
-        est_input_tokens = input_chars / 4  # rough char-to-token ratio
-        est_cost = est_input_tokens / 1000 * 0.003 + 0.015  # input + ~1k output
-        state.budget_spent_usd += est_cost
-
         try:
             response = client.messages.create(
                 model=model,
@@ -492,6 +493,12 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
                 messages=messages,
                 tools=TOOL_SCHEMAS,
             )
+            # Track cost from actual token usage (Sonnet: $3/M input, $15/M output)
+            if hasattr(response, 'usage') and response.usage:
+                api_cost = (response.usage.input_tokens * 3 + response.usage.output_tokens * 15) / 1_000_000
+            else:
+                api_cost = 0.03  # fallback estimate
+            state.budget_spent_usd += api_cost
         except Exception as e:
             log_print(f"[ORCHESTRATOR AGENT] Claude API error: {e}")
             consecutive_failures += 1
@@ -610,6 +617,8 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
                 state.diagnose_count = 0
                 log_print(f"[ORCHESTRATOR AGENT] Diagnosis gate ON: {len(zeros)} zero-score tasks. "
                           f"Must call diagnose before generate_data/generate_adversarial.")
+            else:
+                state.diagnosis_required = False
 
         # After diagnose: count it, unlock generation when done
         if tool_name == "diagnose" and status == "success":
@@ -746,17 +755,7 @@ def main():
 
         # Record per-task counts at session start — filter_data uses this
         # to protect pre-existing data from being removed
-        from collections import Counter
-        _baseline = Counter()
-        if cfg.train_file.exists():
-            for _line in cfg.train_file.read_text().splitlines():
-                if _line.strip():
-                    try:
-                        _baseline[json.loads(_line).get("task_id", "")] += 1
-                    except json.JSONDecodeError:
-                        pass
-        state.baseline_task_counts = dict(_baseline)
-        log_print(f"[ORCHESTRATOR AGENT] Baseline counts: {sum(_baseline.values())} examples across {len(_baseline)} tasks")
+        _recalc_baseline(cfg, state)
 
         if args.fresh:
             # Full reset — no preconceptions
@@ -802,16 +801,7 @@ def main():
                     log_print(f"[ORCHESTRATOR AGENT] WARNING: HF restore failed: {e}")
 
             # Re-count baseline after restore
-            if (cfg.data_dir / "train.jsonl").exists():
-                _baseline = Counter()
-                for _line in cfg.train_file.read_text().splitlines():
-                    if _line.strip():
-                        try:
-                            _baseline[json.loads(_line).get("task_id", "")] += 1
-                        except json.JSONDecodeError:
-                            pass
-                state.baseline_task_counts = dict(_baseline)
-                log_print(f"[ORCHESTRATOR AGENT] Restored baseline: {sum(_baseline.values())} examples across {len(_baseline)} tasks")
+            _recalc_baseline(cfg, state)
 
         # Seed scratchpad note from CLI
         if args.note:

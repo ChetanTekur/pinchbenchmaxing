@@ -38,7 +38,10 @@ Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch):
 | qwen35-9b-clawd-v15 | 16.1 / 23 (70%) | Fixed seq_len 4096→8192 (long tasks were truncated) |
 | qwen35-9b-clawd-v16 | 16.2 / 23 (70%) | Adversarial data for task_12 (0→100%) |
 | qwen35-9b-clawd-v17 | 15.8 / 23 (69%) | Balanced data, smart analyzer |
-| qwen35-9b-clawd-v18 | *training...* | Orchestrator-driven, analyzer guards |
+| qwen35-9b-clawd-v19 | 12.8 / 23 (56%) | Regression — blind data generation without diagnosis |
+| qwen35-9b-clawd-v20 | 15.5 / 23 (67%) | Partial recovery |
+| **qwen35-9b-clawd-v21** | **17.8 / 23 (77%)** | **New best — adversarial fixes for 6 zero tasks** |
+| qwen35-9b-clawd-v22 | ~14 / 23 (~61%) | Regression — old orchestrator overwrote v21 gold data |
 
 ### Key Lessons
 
@@ -50,6 +53,10 @@ Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch):
 
 4. **Quality over quantity.** 50 high-quality examples per task (judge score ≥4.5) outperforms 120 mixed-quality examples. The smart data analyzer uses benchmark scores + judge quality + example counts to decide when to stop generating.
 
+5. **Diagnose before generating.** The v19-v22 regression cycle proved that blind adversarial data generation destroys capabilities. The orchestrator now has a hard gate: `generate_data` and `generate_adversarial` are blocked until `diagnose` runs after each benchmark. Understanding *why* tasks fail is mandatory before changing data.
+
+6. **Gold data must be recoverable.** v22 overwrote v21's gold dataset with worse data. The orchestrator now auto-restores the best-scoring dataset from HuggingFace on regression detection.
+
 Dataset: [huggingface.co/datasets/cptekur/pinchbench-clawd](https://huggingface.co/datasets/cptekur/pinchbench-clawd) (CC BY 4.0)
 
 ---
@@ -58,13 +65,15 @@ Dataset: [huggingface.co/datasets/cptekur/pinchbench-clawd](https://huggingface.
 
 ### The Orchestrator
 
-The orchestrator is a **single-turn agent loop**. Each turn:
+The orchestrator is a **stateful multi-turn agent loop**. Each turn:
 
-1. **State is loaded** from `loop_state.json` — scores, dataset stats, budget, action history
-2. **A system prompt** is assembled from `prompts/orchestrator.md` (a markdown template) with variables filled from `config.yaml` — target score, model name, guardrails, budget
-3. **Claude receives** the system prompt + state summary + action history and returns **one tool call**
-4. **The tool executes** (generate data, train, benchmark, etc.) and the result is appended to the action history
+1. **State is loaded** from `loop_state.json` — scores, dataset stats, budget
+2. **A system prompt** is assembled from `prompts/orchestrator.md` with variables from `config.yaml`
+3. **Claude receives** the full conversation history (previous tool calls + results) and returns **one tool call**
+4. **The tool executes** and the result is appended to the conversation as a `tool_result` message
 5. **State is saved** — crash-safe, resumable from any point
+
+Claude maintains full context of what it diagnosed, hypothesized, and decided — no scratchpad workarounds needed.
 
 ```
                      prompts/orchestrator.md
@@ -93,7 +102,7 @@ The orchestrator is a **single-turn agent loop**. Each turn:
       └──────────────┘ └───────────┘ └──────────────┘
 ```
 
-**No conversation history accumulates.** Each turn is an independent Claude API call (~$0.03). The "memory" is the action history persisted in `loop_state.json`, not Claude's conversation buffer. This means **zero risk of context overflow** regardless of how many turns the session runs.
+**Stateful conversation** — Claude keeps the full conversation history, so it remembers diagnoses and hypotheses across turns. Context is automatically compressed when it exceeds 40 messages (keeps first + last 20). Cost is tracked from actual API token usage.
 
 ### Prompt Architecture
 
@@ -159,10 +168,7 @@ Recommendations per task:
 
 ### Training Data Version Control
 
-Training data is checked into git (`data/checked_in/`) so good datasets are never lost:
-```bash
-bash scripts/checkin_data.sh v17 "balanced 1082 examples, scored 69%"
-```
+Training data is versioned on HuggingFace. The orchestrator pushes to HF before every training run with commit messages like `"Pre-v21 training data: ..."`. On regression, the gold restore mechanism downloads the best version's data from HF history automatically.
 
 ### Training Gates
 
@@ -222,11 +228,18 @@ Notice how the orchestrator inspected the data *first*, saw the imbalance, and r
 
 ### Guardrails
 
-The orchestrator auto-stops if:
+The orchestrator has hard-coded safety mechanisms:
+
+**Auto-stops:**
 - Budget drops below $5
 - Score regresses >10% from best ever
 - Dataset drops below 500 examples
 - A tool fails 3 times consecutively
+- Generation loop detected (5+ generate calls without training)
+
+**Hard gates:**
+- **Diagnose gate** — `generate_data` and `generate_adversarial` are blocked after benchmark until `diagnose` runs at least once. Prevents blind data generation. Capped at 2 diagnose calls per cycle to avoid analysis paralysis.
+- **Gold restore** — on regression (model_version > best_version), auto-downloads the best-scoring dataset from HuggingFace and restores it before starting. Checks local cache (`data/gold_v{N}/`) first.
 
 All prompts are in `prompts/*.md` as templates — editable without touching code. Variables come from `config.yaml`.
 
