@@ -131,33 +131,40 @@ After analysis, classify each failing task into one of these categories before t
 - Never remove data that's working (good benchmark score) just because deep_validate flags cosmetic issues
 - One well-targeted batch of 20 examples beats 100 blind ones
 
-### Phase 2: Fix Data (targeted, not blind)
+### Phase 2: Fix Data — CLEAN FIRST, THEN GENERATE
 
-Use the **Post-Benchmark Decision Framework** above to classify each task before acting. Only touch tasks in the FIX or REGENERATE categories. Tasks classified as LEAVE ALONE or TRAIN AND SEE should not have their data changed. Then take the minimum action needed:
+**The #1 mistake is generating more data for a failing task without first cleaning the existing data.** If a task has 50 examples and scores 0%, adding 20 more examples does NOT fix it — you now have 70 examples teaching bad behavior. The fix is to REMOVE the bad examples, THEN add good ones.
 
-1. **Bad data exists (wrong tools, broken patterns)**: call `validate_data fix=true` to remove. Then check if the task still has ≥30 examples. Only regenerate if it dropped below minimum.
-2. **Data teaches wrong behavior but passes validation**: the examples are syntactically valid but semantically wrong (e.g., reads file but never writes output). You need to regenerate for this task with the `diagnosis_file` so generation targets the specific fix.
-3. **Data is missing or insufficient**: call `generate_data` with `diagnosis_file` for targeted generation that addresses the specific failure pattern.
-4. **Previously added data made scores worse**: consider removing that data entirely. If the base model scored well on a task without fine-tuning data, adding bad data destroys that capability. Sometimes the fix is LESS data, not more.
-5. **Data exists, is clean, but task still fails**: use `generate_adversarial` which learns from the actual benchmark failure transcripts to create corrective examples.
+**Priority order — always try cheaper fixes first:**
 
-**Be cost-effective.** Data generation is expensive (~$0.04/example). Don't regenerate data that's already clean. Don't throw away data that might still be useful. Target your fixes to the specific failure modes identified in analysis. One well-targeted batch of 20 examples is worth more than 100 blind ones.
+#### Step 1: Remove bad examples (cheapest, highest impact)
+- Call `score_data` to score all examples
+- Call `filter_data` with a higher threshold (e.g., `min_score=4`) to remove low-quality examples
+- Call `validate_data fix=true` to remove structurally broken examples
+- For tasks where >30% of examples have issues, consider removing ALL examples for that task and regenerating from scratch
 
-### CRITICAL: Filter only NEW data — never destroy good existing data
+#### Step 2: Inspect what remains
+- Call `inspect_data` — check per-task counts after removal
+- If a task dropped below 30 examples, it needs new data
+- If a task still has 40+ clean examples, try training first — clean data may be enough
 
-The `filter_data` tool has **baseline protection**. At session start, per-task example counts are recorded. When filtering:
-- If removing an example would drop a task below its session-start count, the example is KEPT.
-- This means filtering only removes examples generated DURING this session that scored poorly.
-- Pre-existing good data is never touched by filter_data.
+#### Step 3: Generate ONLY to fill gaps left by cleanup
+- Generate targeted data ONLY for tasks that dropped below minimum after cleanup
+- Use `diagnosis_file` so generation targets the specific failure pattern identified in Step 1
+- For tasks that have enough clean data but still fail, use `generate_adversarial` (learns from benchmark failure transcripts)
 
-**This prevents the infinite loop**: generate → filter (removes old data) → generate to fill gap → filter again → ...
+#### Step 4: When NOT to generate
+- Task has 50+ examples with high judge scores but still fails → the problem is NOT data quantity. Investigate tool names, filenames, behavioral patterns.
+- Task regressed after adding data → the NEW data was bad. Remove it (filter by source/timestamp), don't add more.
+- Multiple tasks regressed simultaneously → likely a model-level issue (template, seq_len), not per-task data.
 
-The correct pattern is:
-1. Generate new data for weak tasks
-2. Score the new data
-3. Filter — only removes low-scoring NEW examples, old data stays
-4. If new data was all bad, analyze WHY and improve the generation prompt
-5. Do NOT just regenerate blindly — fix the prompt/diagnosis first
+**Adding data to bad data makes things worse. v19-v22 proved this: blind adversarial generation destroyed capabilities. Always clean first.**
+
+### Data safety: snapshot before destructive operations
+
+Always call `snapshot` before `filter_data`, `validate_data fix=true`, or `rebalance_data`. These operations delete data and cannot be undone.
+
+The `filter_data` tool has **baseline protection** that prevents tasks from dropping below their session-start count. But when you KNOW the existing data is bad (diagnosis confirmed), you should clean aggressively — snapshot first, then filter/remove, then regenerate to fill gaps.
 
 ### Phase 3: Validate and Train
 
