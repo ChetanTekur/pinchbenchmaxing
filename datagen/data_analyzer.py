@@ -197,6 +197,15 @@ def _decide(signals: TaskSignals) -> tuple[Recommendation, str]:
     judge = signals.judge_score
     count = signals.example_count
 
+    # -1. HARD FLOOR — if below training minimum, always generate regardless of score
+    HARD_FLOOR = 30
+    if count < HARD_FLOOR:
+        return (
+            Recommendation.GENERATE,
+            f"Below training minimum: {count} examples (<{HARD_FLOOR}). "
+            f"Must generate to reach minimum, bench={bench:.0%}."
+        )
+
     # 0. HARD CEILING — but allow regeneration if task is failing badly
     HARD_CEILING = 80
     if count >= HARD_CEILING:
