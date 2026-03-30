@@ -9,10 +9,11 @@ curl -s http://127.0.0.1:18789/health && echo ""
 
 echo ""
 echo "Testing $MODEL through OpenClaw with tools..."
-curl -s http://127.0.0.1:18789/v1/chat/completions \
+echo "Raw response:"
+curl -v http://127.0.0.1:18789/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d "{
     \"model\": \"$MODEL\",
     \"messages\": [{\"role\": \"user\", \"content\": \"List the files in the current directory\"}],
     \"tools\": [{\"type\": \"function\", \"function\": {\"name\": \"list_files\", \"description\": \"List files in a directory\", \"parameters\": {\"type\": \"object\", \"properties\": {\"path\": {\"type\": \"string\"}}}}}]
-  }" | python3 -m json.tool
+  }" 2>&1
