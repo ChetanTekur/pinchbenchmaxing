@@ -20,6 +20,42 @@ from agents.base import log_print, _write_log, TASK_IDS
 _PROJECT_ROOT = Path(__file__).parent.parent
 
 
+def _prune_stale_scores(cfg) -> int:
+    """Remove score entries that don't match any current training example.
+    Returns number of stale entries removed."""
+    scores_file = cfg.data_dir / "scores.json"
+    if not scores_file.exists():
+        return 0
+
+    scores = json.loads(scores_file.read_text())
+    before = len(scores)
+
+    # Build valid keys from current train data
+    valid_keys = set()
+    train_file = cfg.data_dir / "train.jsonl"
+    if train_file.exists():
+        for line in train_file.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                ex = json.loads(line)
+                task_id = ex.get("task_id", "")
+                msgs = ex.get("messages", [])
+                user_msgs = [m for m in msgs if m.get("role") == "user"]
+                user_text = user_msgs[0]["content"][:80] if user_msgs else ""
+                valid_keys.add(f"{task_id}|{user_text}")
+                valid_keys.add(f"{task_id}::{user_text}")
+            except (json.JSONDecodeError, IndexError, KeyError):
+                pass
+
+    pruned = {k: v for k, v in scores.items() if k in valid_keys}
+    removed = before - len(pruned)
+    if removed > 0:
+        scores_file.write_text(json.dumps(pruned, indent=2))
+        log_print(f"  [scores] Pruned {removed} stale entries ({before} → {len(pruned)})")
+    return removed
+
+
 def _post_curation_check(train_file: Path, min_per_task: int = 40) -> dict | None:
     """Check if any task dropped below min after a curation step.
     Returns None if OK, or a warning dict with tasks that need data."""
@@ -382,6 +418,9 @@ def generate_adversarial(args: dict, cfg, state) -> dict:
 def score_data(args: dict, cfg, state) -> dict:
     """Run the LLM judge on all unscored examples."""
     try:
+        # Prune stale scores before judging (prevents inflated counts)
+        _prune_stale_scores(cfg)
+
         script = str(_PROJECT_ROOT / "datagen" / "llm_judge.py")
         rc, output = _run_script([sys.executable, script, "run"], "score_data")
 
@@ -430,6 +469,9 @@ def filter_data(args: dict, cfg, state) -> dict:
     Force mode: removes all low-scoring examples, only respecting hard floor of 15/task.
     """
     try:
+        # Prune stale scores before filtering (ensures score keys match current data)
+        _prune_stale_scores(cfg)
+
         min_score = args.get("min_score", cfg.data.min_judge_score)
         force = args.get("force", False)
         target_tasks = set(args.get("tasks", []))  # empty = all tasks
