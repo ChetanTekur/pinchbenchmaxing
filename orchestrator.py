@@ -278,14 +278,13 @@ def build_turn_context(state: AgentState, cfg) -> str:
             "Understand WHY tasks are failing before generating more data.\n"
         )
 
-    # Human directive — injected from --note, shown at top with highest priority
+    # Human directive — only shown if a --note was passed and tagged as directive
     directive_text = ""
     if state.scratchpad:
-        # The first scratchpad entry from --note is the human directive
-        # Show it prominently at the top
-        first_note = state.scratchpad[0].get("note", "") if state.scratchpad else ""
-        if first_note:
-            directive_text = f"\n## HUMAN DIRECTIVE (highest priority — follow this)\n{first_note}\n"
+        for note in state.scratchpad:
+            if note.get("is_directive"):
+                directive_text = f"\n## HUMAN DIRECTIVE (highest priority — follow this)\n{note['note']}\n"
+                break
 
     return f"""{directive_text}## Current State
 
@@ -465,6 +464,8 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
             if regression_note:
                 first_msg = f"## REGRESSION CONTEXT\n{regression_note}\n\n{turn_context}"
                 regression_note = ""  # only inject once
+            # Clear directive after first turn — it's in the conversation now
+            state.scratchpad = [n for n in state.scratchpad if not n.get("is_directive")]
             messages.append({"role": "user", "content": first_msg})
         # (subsequent turns: messages already extended after tool execution below)
 
@@ -769,8 +770,9 @@ def main():
             state.scratchpad.append({
                 "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
                 "note": args.note,
+                "is_directive": True,
             })
-            log_print(f"[ORCHESTRATOR AGENT] Note: {args.note}")
+            log_print(f"[ORCHESTRATOR AGENT] Directive: {args.note}")
 
         save_state(state, state_file)
         run_orchestrator(cfg, state, state_file, dry_run=args.dry_run, regression_note=regression_note)
