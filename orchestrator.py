@@ -530,13 +530,23 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
         if tool_name in GENERATION_TOOLS and state.diagnosis_required:
             log_print(f"[ORCHESTRATOR AGENT] BLOCKED: {tool_name} requires diagnosis first.")
             log_print(f"[ORCHESTRATOR AGENT] Call 'diagnose' to understand WHY tasks are failing before generating data.")
-            # Feed the block back into the conversation so Claude adjusts
+            # Feed the block as a tool_result so the API is happy
             messages.append({"role": "assistant", "content": response.content})
-            messages.append({"role": "user", "content": (
-                f"BLOCKED: {tool_name} is not allowed until you call 'diagnose' first. "
-                f"You have {MAX_DIAGNOSE_PER_CYCLE - state.diagnose_count} diagnose calls remaining this cycle. "
-                f"Understand WHY tasks are failing before generating data. Call diagnose now."
-            )})
+            messages.append({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_block.id,
+                        "content": (
+                            f"BLOCKED: {tool_name} is not allowed until you call 'diagnose' first. "
+                            f"You have {MAX_DIAGNOSE_PER_CYCLE - state.diagnose_count} diagnose calls remaining this cycle. "
+                            f"Understand WHY tasks are failing before generating data. Call diagnose now."
+                        ),
+                        "is_error": True,
+                    }
+                ],
+            })
             continue
 
         # Show Claude's reasoning if it explained before calling the tool
