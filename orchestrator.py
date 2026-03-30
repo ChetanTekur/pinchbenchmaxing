@@ -271,7 +271,16 @@ def build_turn_context(state: AgentState, cfg) -> str:
             "Understand WHY tasks are failing before generating more data.\n"
         )
 
-    return f"""## Current State
+    # Human directive — injected from --note, shown at top with highest priority
+    directive_text = ""
+    if state.scratchpad:
+        # The first scratchpad entry from --note is the human directive
+        # Show it prominently at the top
+        first_note = state.scratchpad[0].get("note", "") if state.scratchpad else ""
+        if first_note:
+            directive_text = f"\n## HUMAN DIRECTIVE (highest priority — follow this)\n{first_note}\n"
+
+    return f"""{directive_text}## Current State
 
 Model: v{state.model_version} ({state.current_ollama_model or 'none'})
 Score: {state.avg_score:.3f} ({state.avg_score*100:.1f}%)

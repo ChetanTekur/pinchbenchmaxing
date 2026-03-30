@@ -57,7 +57,7 @@ class Recommendation(str, Enum):
 # ── Thresholds ───────────────────────────────────────────────────────────────
 
 BENCH_HIGH    = 0.80   # benchmark score >= this is "passing"
-BENCH_MID_LO  = 0.20   # benchmark score below this is "failing"
+BENCH_MID_LO  = 0.30   # benchmark score at or below this is "failing"
 JUDGE_HIGH    = 4.5     # judge score >= this means data quality is good
 JUDGE_LOW     = 3.5     # judge score below this means data quality is bad
 COUNT_HIGH    = 50      # enough examples that more won't help
@@ -209,13 +209,13 @@ def _decide(signals: TaskSignals) -> tuple[Recommendation, str]:
     # 0. HARD CEILING — but allow regeneration if task is failing badly
     HARD_CEILING = 80
     if count >= HARD_CEILING:
-        if bench < BENCH_MID_LO and count > COUNT_BLOAT:
+        if bench <= BENCH_MID_LO and count > COUNT_BLOAT:
             return (
                 Recommendation.TRIM,
                 f"Hard ceiling: {count} examples (>{HARD_CEILING}) but bench={bench:.0%}. "
                 f"Trim bad examples to ~{COUNT_HIGH}, then regenerate."
             )
-        if bench < BENCH_MID_LO:
+        if bench <= BENCH_MID_LO:
             # Task has lots of data but still fails — data quality is the problem
             return (
                 Recommendation.REGENERATE,
@@ -258,7 +258,7 @@ def _decide(signals: TaskSignals) -> tuple[Recommendation, str]:
         )
 
     # 4. Benchmark LOW + judge LOW → data quality problem
-    if bench < BENCH_MID_LO and judge > 0 and judge < JUDGE_LOW:
+    if bench <= BENCH_MID_LO and judge > 0 and judge < JUDGE_LOW:
         return (
             Recommendation.REGENERATE,
             f"Benchmark {bench:.0%} with low judge score ({judge:.1f}). "
@@ -266,7 +266,7 @@ def _decide(signals: TaskSignals) -> tuple[Recommendation, str]:
         )
 
     # 5. Benchmark LOW + count LOW → not enough data
-    if bench < BENCH_MID_LO and count < COUNT_LOW:
+    if bench <= BENCH_MID_LO and count < COUNT_LOW:
         return (
             Recommendation.GENERATE,
             f"Benchmark {bench:.0%} with only {count} examples (need >= {COUNT_LOW}). "
@@ -274,7 +274,7 @@ def _decide(signals: TaskSignals) -> tuple[Recommendation, str]:
         )
 
     # 6. Benchmark LOW + enough data + good judge → adversarial
-    if bench < BENCH_MID_LO and count >= COUNT_HIGH and (judge >= JUDGE_HIGH or judge == 0):
+    if bench <= BENCH_MID_LO and count >= COUNT_HIGH and (judge >= JUDGE_HIGH or judge == 0):
         return (
             Recommendation.ADVERSARIAL,
             f"Benchmark {bench:.0%} despite {count} examples"
@@ -283,7 +283,7 @@ def _decide(signals: TaskSignals) -> tuple[Recommendation, str]:
         )
 
     # 7. Benchmark LOW + moderate data → generate to fill up
-    if bench < BENCH_MID_LO:
+    if bench <= BENCH_MID_LO:
         return (
             Recommendation.GENERATE,
             f"Benchmark {bench:.0%} with {count} examples. "
