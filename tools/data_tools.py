@@ -203,7 +203,7 @@ def generate_data(args: dict, cfg, state) -> dict:
 
         # Smart guard: use data analyzer to decide which tasks need generation
         try:
-            from datagen.data_analyzer import get_task_recommendation
+            from datagen.data_analyzer import get_task_recommendation, MAX_ADD_PER_CYCLE
             skip = []
             for t in tasks:
                 rec = get_task_recommendation(t, cfg, state.to_dict())
@@ -215,6 +215,28 @@ def generate_data(args: dict, cfg, state) -> dict:
                 tasks = [t for t in tasks if t not in [s[0] for s in skip]]
             if not tasks:
                 return {"status": "success", "result": {"generated": 0, "note": "Analyzer: all tasks sufficient"}, "cost_usd": 0}
+
+            # Per-cycle cap: max +20 per task from session start
+            baseline = getattr(state, "baseline_task_counts", {}) or {}
+            if baseline:
+                from collections import Counter as _Ctr
+                current = _Ctr()
+                if cfg.train_file.exists():
+                    for _line in cfg.train_file.read_text().splitlines():
+                        if _line.strip():
+                            try:
+                                current[json.loads(_line).get("task_id", "")] += 1
+                            except json.JSONDecodeError:
+                                pass
+                capped = []
+                for t in tasks:
+                    added = current.get(t, 0) - baseline.get(t, 0)
+                    if added >= MAX_ADD_PER_CYCLE:
+                        capped.append(t)
+                        log_print(f"  [generate_data] CAPPED {t}: already +{added} this session (max {MAX_ADD_PER_CYCLE})")
+                tasks = [t for t in tasks if t not in capped]
+                if not tasks:
+                    return {"status": "success", "result": {"generated": 0, "note": f"All tasks hit +{MAX_ADD_PER_CYCLE} cap"}, "cost_usd": 0}
         except Exception as e:
             log_print(f"  [generate_data] Analyzer failed ({e}), proceeding without guard")
 
@@ -277,7 +299,7 @@ def generate_adversarial(args: dict, cfg, state) -> dict:
         tasks = [t for t in tasks if t.startswith("task_")]
 
         try:
-            from datagen.data_analyzer import get_task_recommendation
+            from datagen.data_analyzer import get_task_recommendation, MAX_ADD_PER_CYCLE
             skip = []
             for t in tasks:
                 rec = get_task_recommendation(t, cfg, state.to_dict())
@@ -289,6 +311,28 @@ def generate_adversarial(args: dict, cfg, state) -> dict:
                 tasks = [t for t in tasks if t not in skip]
             if not tasks:
                 return {"status": "success", "result": {"generated": 0, "note": "Analyzer: no tasks need adversarial"}, "cost_usd": 0}
+
+            # Per-cycle cap
+            baseline = getattr(state, "baseline_task_counts", {}) or {}
+            if baseline:
+                from collections import Counter as _Ctr
+                current = _Ctr()
+                if cfg.train_file.exists():
+                    for _line in cfg.train_file.read_text().splitlines():
+                        if _line.strip():
+                            try:
+                                current[json.loads(_line).get("task_id", "")] += 1
+                            except json.JSONDecodeError:
+                                pass
+                capped = []
+                for t in tasks:
+                    added = current.get(t, 0) - baseline.get(t, 0)
+                    if added >= MAX_ADD_PER_CYCLE:
+                        capped.append(t)
+                        log_print(f"  [generate_adversarial] CAPPED {t}: already +{added} this session (max {MAX_ADD_PER_CYCLE})")
+                tasks = [t for t in tasks if t not in capped]
+                if not tasks:
+                    return {"status": "success", "result": {"generated": 0, "note": f"All tasks hit +{MAX_ADD_PER_CYCLE} cap"}, "cost_usd": 0}
         except Exception as e:
             log_print(f"  [generate_adversarial] Analyzer failed ({e}), proceeding without guard")
 
@@ -647,6 +691,117 @@ def rebalance_data(args: dict, cfg, state) -> dict:
         return {
             "status": "success",
             "result": result,
+            "cost_usd": 0.0,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+# ── compare_data ─────────────────────────────────────────────────────────────
+
+def compare_data(args: dict, cfg, state) -> dict:
+    """Compare current training data against the gold/best version from HuggingFace.
+
+    Returns per-task diff showing additions and removals. Flags tasks where
+    data was reduced from the gold baseline, especially for well-performing tasks.
+    """
+    try:
+        from collections import Counter
+
+        # Count current data
+        current = Counter()
+        train_file = cfg.data_dir / "train.jsonl"
+        if train_file.exists():
+            for line in train_file.read_text().splitlines():
+                if line.strip():
+                    try:
+                        current[json.loads(line).get("task_id", "")] += 1
+                    except json.JSONDecodeError:
+                        pass
+
+        # Get gold data counts from HuggingFace
+        best_v = args.get("version", state.best_version)
+        if not best_v or best_v <= 0:
+            return {"status": "error", "error": "No best version to compare against"}
+
+        gold = Counter()
+        try:
+            from huggingface_hub import HfApi, hf_hub_download
+            api = HfApi()
+            hf_repo = cfg.huggingface.dataset_repo
+
+            commits = api.list_repo_commits(hf_repo, repo_type="dataset")
+            target_revision = None
+            for commit in commits:
+                if f"Pre-v{best_v} " in (commit.title or ""):
+                    target_revision = commit.commit_id
+                    break
+
+            if not target_revision:
+                return {"status": "error", "error": f"No 'Pre-v{best_v}' commit on HuggingFace"}
+
+            gold_path = hf_hub_download(hf_repo, "train.jsonl", revision=target_revision, repo_type="dataset")
+            for line in open(gold_path).readlines():
+                if line.strip():
+                    try:
+                        gold[json.loads(line).get("task_id", "")] += 1
+                    except json.JSONDecodeError:
+                        pass
+        except Exception as e:
+            return {"status": "error", "error": f"Failed to fetch gold data: {e}"}
+
+        # Build diff with score context
+        scores = state.scores or {}
+        all_tasks = sorted(set(list(current.keys()) + list(gold.keys())))
+
+        diff = []
+        warnings = []
+        for t in all_tasks:
+            g = gold.get(t, 0)
+            c = current.get(t, 0)
+            delta = c - g
+            bench = scores.get(t, 0)
+            entry = {
+                "task": t,
+                "gold": g,
+                "current": c,
+                "delta": delta,
+                "bench_score": round(bench, 2),
+            }
+            diff.append(entry)
+
+            # Flag dangerous reductions
+            if g > 0 and delta < 0:
+                pct_lost = abs(delta) / g * 100
+                if bench >= 0.70 and pct_lost > 10:
+                    entry["warning"] = f"PROTECTED task lost {pct_lost:.0f}% of gold data"
+                    warnings.append(f"{t}: lost {abs(delta)} examples ({pct_lost:.0f}%), bench={bench:.0%}")
+                elif pct_lost > 20:
+                    entry["warning"] = f"Lost {pct_lost:.0f}% of gold data"
+                    warnings.append(f"{t}: lost {abs(delta)} examples ({pct_lost:.0f}%), bench={bench:.0%}")
+
+        # Summary
+        total_gold = sum(gold.values())
+        total_current = sum(current.values())
+        tasks_reduced = sum(1 for d in diff if d["delta"] < 0)
+        tasks_added = sum(1 for d in diff if d["delta"] > 0)
+
+        log_print(f"  [compare_data] Gold v{best_v}: {total_gold} | Current: {total_current} | Delta: {total_current - total_gold:+d}")
+        log_print(f"  [compare_data] Tasks reduced: {tasks_reduced} | Tasks added to: {tasks_added}")
+        if warnings:
+            for w in warnings:
+                log_print(f"  [compare_data] WARNING: {w}")
+
+        return {
+            "status": "success",
+            "result": {
+                "gold_version": best_v,
+                "gold_total": total_gold,
+                "current_total": total_current,
+                "diff": diff,
+                "warnings": warnings,
+                "safe_to_train": len(warnings) == 0,
+            },
             "cost_usd": 0.0,
         }
     except Exception as e:

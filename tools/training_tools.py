@@ -191,6 +191,25 @@ def train(args: dict, cfg, state) -> dict:
             log_print(f"  [train] {quality['error']}")
             return {"status": "error", "error": quality["error"]}
 
+        # HARD GATE 3: gold data diff — block if well-performing tasks lost data
+        if state.best_version > 0 and state.scores:
+            from .data_tools import compare_data as _compare
+            diff_result = _compare({"version": state.best_version}, cfg, state)
+            if diff_result.get("status") == "success":
+                warnings = diff_result["result"].get("warnings", [])
+                if warnings:
+                    warn_text = "; ".join(warnings[:5])
+                    log_print(f"  [train] DATA SAFETY WARNING: {warn_text}")
+                    return {
+                        "status": "error",
+                        "error": (
+                            f"BLOCKED: Gold data integrity check failed. "
+                            f"{len(warnings)} task(s) lost significant data vs gold v{state.best_version}: "
+                            f"{warn_text}. "
+                            f"Call compare_data to see full diff. Restore gold data or acknowledge the changes."
+                        ),
+                    }
+
         # Snapshot data distribution to log — permanent record of what each version trained on
         from collections import Counter as _Counter
         _snap = _Counter()

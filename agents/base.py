@@ -21,14 +21,33 @@ from pathlib import Path
 _log_file = None
 
 
-def setup_file_logger(log_dir: str | os.PathLike) -> None:
-    """Initialize the shared file logger. Called once by loop.py at startup."""
+def setup_file_logger(log_dir: str | os.PathLike, session_label: str = "") -> None:
+    """Initialize the shared file logger. Called once at startup.
+
+    Creates a session-specific log file (e.g. loop_v23_20260330_143000.log)
+    and a loop_latest.log symlink for convenience.
+    """
     global _log_file
-    log_path = Path(log_dir) / "loop.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    _log_file = open(log_path, "a", buffering=1)  # line-buffered
+    log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    label = f"_{session_label}" if session_label else ""
+    session_log = log_dir / f"loop{label}_{ts}.log"
+    _log_file = open(session_log, "a", buffering=1)
+
+    # Symlink loop_latest.log for convenience
+    latest = log_dir / "loop_latest.log"
+    try:
+        if latest.is_symlink() or latest.exists():
+            latest.unlink()
+        latest.symlink_to(session_log.name)
+    except OSError:
+        pass  # symlink may fail on some filesystems
+
     _write_log(f"\n{'='*62}")
-    _write_log(f"  Loop started: {datetime.utcnow().isoformat()}")
+    _write_log(f"  Session started: {datetime.utcnow().isoformat()}")
+    _write_log(f"  Log file: {session_log.name}")
     _write_log(f"{'='*62}")
 
 

@@ -9,7 +9,7 @@ from .data_tools import (
     inspect_data, check_diversity, generate_data, generate_adversarial,
     score_data, filter_data, repair_data,
     dedup_data, rebalance_data, snapshot, push_hf,
-    validate_data, restore_gold_data,
+    validate_data, restore_gold_data, compare_data,
 )
 from .training_tools import (
     train, convert, register, validate_model, benchmark, check_disk,
@@ -366,6 +366,25 @@ TOOL_SCHEMAS = [
         },
     },
     {
+        "name": "compare_data",
+        "description": (
+            "Compare current training data against the gold/best version from HuggingFace. "
+            "Returns per-task diff showing additions and removals. Flags tasks where "
+            "well-performing (≥70%) data was reduced — these are dangerous regressions. "
+            "Call before training to verify data integrity."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "type": "integer",
+                    "description": "Gold version to compare against (defaults to best_version).",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "restore_gold_data",
         "description": (
             "Restore training data from the best-scoring version. "
@@ -469,6 +488,7 @@ _DISPATCH = {
     "rebalance_data":       rebalance_data,
     "validate_data":        validate_data,
     "snapshot":             snapshot,
+    "compare_data":         compare_data,
     "restore_gold_data":    restore_gold_data,
     "benchmark":            benchmark,
     "train":                train,

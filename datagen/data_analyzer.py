@@ -58,11 +58,13 @@ class Recommendation(str, Enum):
 
 BENCH_HIGH    = 0.80   # benchmark score >= this is "passing"
 BENCH_MID_LO  = 0.30   # benchmark score at or below this is "failing"
+BENCH_PROTECTED = 0.70 # tasks at or above this have gold floor protection
 JUDGE_HIGH    = 4.5     # judge score >= this means data quality is good
 JUDGE_LOW     = 3.5     # judge score below this means data quality is bad
 COUNT_HIGH    = 50      # enough examples that more won't help
 COUNT_LOW     = 30      # too few examples to learn the task
 COUNT_BLOAT   = 100     # so many examples it may cause forgetting of other tasks
+MAX_ADD_PER_CYCLE = 20  # max new examples per task per improvement cycle
 
 # Tasks that depend on infrastructure (image gen, web search, PDF tools, etc.)
 # If these score 0% with plenty of good data, it's probably a setup issue.

@@ -142,6 +142,13 @@ def _format_result(tool_name: str, r: dict) -> str:
     elif tool_name == "snapshot":
         return f"saved to {r.get('path', '?')}"
 
+    elif tool_name == "compare_data":
+        warnings = r.get("warnings", [])
+        safe = r.get("safe_to_train", True)
+        return (f"gold v{r.get('gold_version','?')}: {r.get('gold_total','?')} | "
+                f"current: {r.get('current_total','?')} | "
+                f"{'SAFE' if safe else f'{len(warnings)} WARNINGS'}")
+
     elif tool_name == "restore_gold_data":
         return f"restored v{r.get('version', '?')} ({r.get('total_examples', '?')} examples, {r.get('tasks', '?')} tasks)"
 
@@ -687,9 +694,14 @@ def main():
     args = parser.parse_args()
 
     if args.command == "run":
-        # Initialize logger
+        # Initialize logger (session-based: loop_v23_20260330_143000.log)
         log_dir = cfg.data_dir.parent / "logs"
-        setup_file_logger(log_dir)
+        session_label = ""
+        if args.model:
+            m = re.search(r'v(\d+)', args.model)
+            if m:
+                session_label = f"v{m.group(1)}"
+        setup_file_logger(log_dir, session_label=session_label)
 
         state_file = cfg.data_dir / STATE_FILE_NAME
         state = load_state(state_file)
