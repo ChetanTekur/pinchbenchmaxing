@@ -225,14 +225,15 @@ def cmd_analyze(log_dir: Path, tasks: list[str]):
             print(f"    Errors: {failure['errors'][:2]}")
 
 
-def cmd_run(log_dir: Path, tasks: list[str], n_per_task: int = EXAMPLES_PER_TASK):
+def cmd_run(log_dir: Path, tasks: list[str], n_per_task: int = EXAMPLES_PER_TASK, log_file: Path | None = None):
     """Generate adversarial examples from benchmark failures."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         print("ERROR: ANTHROPIC_API_KEY not set")
         sys.exit(1)
 
-    log_file = find_latest_log(log_dir)
+    if not log_file:
+        log_file = find_latest_log(log_dir)
     if not log_file:
         print(f"No benchmark logs found in {log_dir}")
         sys.exit(1)
@@ -325,20 +326,24 @@ def main():
 
     run_p = sub.add_parser("run", help="Generate adversarial examples")
     run_p.add_argument("--log-dir", type=str, default=None)
+    run_p.add_argument("--log-file", type=str, default=None,
+                       help="Specific benchmark log file (overrides --log-dir)")
     run_p.add_argument("--tasks", type=str, required=True,
                        help="Comma-separated task IDs")
     run_p.add_argument("--n-per-task", type=int, default=EXAMPLES_PER_TASK)
 
     analyze_p = sub.add_parser("analyze", help="Show failures without generating")
     analyze_p.add_argument("--log-dir", type=str, default=None)
+    analyze_p.add_argument("--log-file", type=str, default=None)
     analyze_p.add_argument("--tasks", type=str, required=True)
 
     args = parser.parse_args()
     log_dir = Path(args.log_dir) if args.log_dir else (_cfg.data_dir.parent / "logs")
+    log_file = Path(args.log_file) if getattr(args, 'log_file', None) else None
     tasks = args.tasks.split(",")
 
     if args.command == "run":
-        cmd_run(log_dir, tasks, args.n_per_task)
+        cmd_run(log_dir, tasks, args.n_per_task, log_file=log_file)
     elif args.command == "analyze":
         cmd_analyze(log_dir, tasks)
     else:

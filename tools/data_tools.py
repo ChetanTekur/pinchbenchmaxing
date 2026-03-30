@@ -293,17 +293,29 @@ def generate_adversarial(args: dict, cfg, state) -> dict:
             log_print(f"  [generate_adversarial] Analyzer failed ({e}), proceeding without guard")
 
         script = str(_PROJECT_ROOT / "datagen" / "adversarial_gen.py")
-        log_dir = str(cfg.data_dir.parent / "logs")
+        log_dir = cfg.data_dir.parent / "logs"
         generated = {}
         total = 0
+
+        # Find the log file matching the current model (not just the latest)
+        model_name = state.current_ollama_model or ""
+        specific_log = None
+        if model_name:
+            # Convert "ollama/qwen35-9b-clawd-v21" → "bench_ollama_qwen35-9b-clawd-v21.log"
+            clean_name = model_name.replace("/", "_")
+            candidate = log_dir / f"bench_{clean_name}.log"
+            if candidate.exists():
+                specific_log = str(candidate)
 
         for task in tasks:
             cmd = [
                 sys.executable, script, "run",
-                "--log-dir", log_dir,
+                "--log-dir", str(log_dir),
                 "--tasks", task,
                 "--n-per-task", str(n_per_task),
             ]
+            if specific_log:
+                cmd.extend(["--log-file", specific_log])
             rc, output = _run_script(cmd, f"adversarial:{task}")
             generated[task] = {"returncode": rc}
             if rc == 0:
