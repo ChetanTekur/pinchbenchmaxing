@@ -225,8 +225,122 @@ def cmd_analyze(log_dir: Path, tasks: list[str]):
             print(f"    Errors: {failure['errors'][:2]}")
 
 
+def _adversarial_pilot(task_id: str, task: dict, failure: dict, client,
+                       max_attempts: int = 3) -> tuple[str, list]:
+    """Generate pilot adversarial examples with self-healing.
+
+    Self-healing: truncation detection (reduce batch size, increase max_tokens),
+    structural validation, semantic check against ground truth.
+    Returns (verdict, validated_examples).
+    """
+    from datagen.validate_data import validate_example
+    from datagen.deep_validate import semantic_check
+    from datagen.task_loader import load_tasks
+
+    batch_size = 3
+    max_tok = 8192
+    failure_log = []
+
+    # Load ground truth for semantic check
+    all_tasks = load_tasks()
+    ground_truth = all_tasks.get(task_id)
+
+    for attempt in range(1, max_attempts + 1):
+        print(f"    Pilot attempt {attempt}/{max_attempts} (n={batch_size}, max_tok={max_tok})...")
+
+        prompt = build_adversarial_prompt(task_id, task, failure, batch_size)
+
+        try:
+            resp = client.messages.create(
+                model=MODEL, max_tokens=max_tok,
+                messages=[{"role": "user", "content": prompt}],
+            )
+        except Exception as e:
+            failure_log.append(f"attempt {attempt}: API error: {e}")
+            print(f"      API error: {e}")
+            continue
+
+        # Check truncation
+        if resp.stop_reason == "max_tokens":
+            failure_log.append(f"attempt {attempt}: truncated (max_tok={max_tok})")
+            print(f"      Truncated (stop_reason=max_tokens)")
+            if batch_size > 1:
+                batch_size = 1
+                print(f"      Self-heal: reduced batch to 1")
+            elif max_tok < 32000:
+                max_tok = min(max_tok * 2, 32000)
+                print(f"      Self-heal: increased max_tokens to {max_tok}")
+            else:
+                print(f"      Cannot fix truncation: max budget reached")
+                break
+            continue
+
+        raw_text = resp.content[0].text.strip()
+        examples = extract_json_array(raw_text)
+
+        if not examples:
+            failure_log.append(f"attempt {attempt}: no valid JSON parsed")
+            print(f"      No valid examples parsed")
+            if batch_size > 1:
+                batch_size = 1
+                print(f"      Self-heal: reduced batch to 1")
+            continue
+
+        # Structural validation
+        parsed = []
+        for ex in examples:
+            p = parse_example(ex, task_id)
+            if p:
+                issues = validate_example(p)
+                blocking = [i for i in issues if i["severity"] in ("critical", "high")
+                            or i["check"] == "missing_required_tool"]
+                if blocking:
+                    check_types = [i["check"] for i in blocking]
+                    print(f"      Rejected: {', '.join(check_types)}")
+                    continue
+                p["source"] = "adversarial"
+                parsed.append(p)
+
+        if not parsed:
+            failure_log.append(f"attempt {attempt}: all examples rejected by validation")
+            print(f"      All examples failed structural validation")
+            continue
+
+        print(f"      {len(parsed)} examples passed structural validation")
+
+        # Semantic check against ground truth
+        if ground_truth:
+            result = semantic_check(task_id, parsed, ground_truth)
+            if not result.get("skipped"):
+                verdict = result.get("verdict", "UNKNOWN")
+                print(f"      Semantic verdict: {verdict}")
+                if result.get("reasoning"):
+                    print(f"      Reasoning: {result['reasoning'][:200]}")
+                if verdict == "GOOD":
+                    return "GOOD", parsed
+                elif verdict == "BAD":
+                    failure_log.append(f"attempt {attempt}: semantic BAD -- {result.get('reasoning', '')[:100]}")
+                    continue
+                else:
+                    # NEEDS_WORK -- check if we have more attempts
+                    failure_log.append(f"attempt {attempt}: semantic NEEDS_WORK")
+                    if attempt == max_attempts:
+                        # Last attempt, return what we have
+                        return "NEEDS_WORK", []
+                    continue
+
+        # No ground truth -- return as UNVERIFIED
+        return "UNVERIFIED", parsed
+
+    # All attempts failed
+    print(f"    PILOT FAILED for {task_id} after {max_attempts} attempts")
+    for entry in failure_log:
+        print(f"      - {entry}")
+    return "BAD", []
+
+
 def cmd_run(log_dir: Path, tasks: list[str], n_per_task: int = EXAMPLES_PER_TASK, log_file: Path | None = None):
-    """Generate adversarial examples from benchmark failures."""
+    """Generate adversarial examples from benchmark failures with pilot validation."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         print("ERROR: ANTHROPIC_API_KEY not set")
@@ -238,6 +352,10 @@ def cmd_run(log_dir: Path, tasks: list[str], n_per_task: int = EXAMPLES_PER_TASK
         print(f"No benchmark logs found in {log_dir}")
         sys.exit(1)
 
+    # Load task definitions from task_loader (ground truth)
+    from datagen.task_loader import load_tasks
+    all_task_defs = load_tasks()
+
     log_text = log_file.read_text(errors="replace")
     print(f"Source log: {log_file.name}")
 
@@ -246,7 +364,9 @@ def cmd_run(log_dir: Path, tasks: list[str], n_per_task: int = EXAMPLES_PER_TASK
     all_new = []
 
     for task_id in tasks:
-        if task_id not in TASKS:
+        # Use task_loader for ground truth, fall back to TASKS dict
+        task = all_task_defs.get(task_id, TASKS.get(task_id))
+        if not task:
             print(f"  {task_id}: unknown task, skipping")
             continue
 
@@ -257,73 +377,104 @@ def cmd_run(log_dir: Path, tasks: list[str], n_per_task: int = EXAMPLES_PER_TASK
 
         failure = extract_failure_pattern(section, task_id)
         if failure["score"] is not None and failure["score"] >= 0.8:
-            print(f"  {task_id}: score={failure['score']:.1f}, not a failure — skipping")
+            print(f"  {task_id}: score={failure['score']:.1f}, not a failure -- skipping")
             continue
 
-        print(f"  {task_id}: score={failure.get('score', '?')}, "
+        print(f"\n  {task_id}: score={failure.get('score', '?')}, "
               f"patterns={failure.get('patterns', [])}")
 
-        # Generate in batches of 3 (Claude reliably produces 3 per call)
-        BATCH_SIZE = 3
-        n_batches = (n_per_task + BATCH_SIZE - 1) // BATCH_SIZE
-        parsed = []
+        # Pilot validation first
+        verdict, pilot_examples = _adversarial_pilot(task_id, task, failure, client)
+        print(f"    Pilot verdict: {verdict} ({len(pilot_examples)} examples)")
 
-        for batch_idx in range(n_batches):
-            batch_n = min(BATCH_SIZE, n_per_task - len(parsed))
-            if batch_n <= 0:
-                break
+        if verdict not in ("GOOD", "UNVERIFIED") or not pilot_examples:
+            print(f"    SKIPPING {task_id} -- pilot failed")
+            results["per_task"][task_id] = 0
+            results["errors"].append({"task": task_id, "error": f"pilot_{verdict}"})
+            continue
 
-            prompt = build_adversarial_prompt(
-                task_id, TASKS[task_id], failure, batch_n
-            )
+        # Pilot passed -- save pilot examples
+        parsed = list(pilot_examples)
 
-            try:
-                resp = client.messages.create(
-                    model=MODEL, max_tokens=8192,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                raw_text = resp.content[0].text.strip()
-                examples = extract_json_array(raw_text)
+        # Generate remaining in batches
+        remaining = n_per_task - len(parsed)
+        if remaining > 0:
+            # Determine safe parameters from pilot
+            max_tok = 16000 if task_id in ("task_09_files", "task_10_workflow",
+                "task_15_daily_summary", "task_16_email_triage", "task_17_email_search",
+                "task_18_market_research", "task_19_spreadsheet_summary",
+                "task_21_openclaw_comprehension") else 8192
+            BATCH_SIZE = 3
+            n_batches = (remaining + BATCH_SIZE - 1) // BATCH_SIZE
 
-                if not examples:
-                    print(f"    ✗ Batch {batch_idx+1}: could not parse response")
-                    results["errors"].append({"task": task_id, "error": f"parse_failure_batch_{batch_idx}"})
-                    continue
+            from datagen.validate_data import validate_example
 
-                from datagen.validate_data import validate_example
-                batch_kept = 0
-                for ex in examples:
-                    p = parse_example(ex, task_id)
-                    if p:
-                        # Validate before accepting — reject structurally bad examples
-                        issues = validate_example(p)
-                        blocking = [i for i in issues if i["severity"] in ("critical", "high")
-                                    or i["check"] == "missing_required_tool"]
-                        if blocking:
-                            check_types = [i["check"] for i in blocking]
-                            print(f"      ✗ Rejected: {', '.join(check_types)}")
+            for batch_idx in range(n_batches):
+                batch_n = min(BATCH_SIZE, n_per_task - len(parsed))
+                if batch_n <= 0:
+                    break
+
+                prompt = build_adversarial_prompt(task_id, task, failure, batch_n)
+
+                try:
+                    resp = client.messages.create(
+                        model=MODEL, max_tokens=max_tok,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+
+                    # Skip truncated responses
+                    if resp.stop_reason == "max_tokens":
+                        print(f"    Batch {batch_idx+1}: truncated, reducing to 1 example")
+                        # Retry with 1 example
+                        prompt = build_adversarial_prompt(task_id, task, failure, 1)
+                        resp = client.messages.create(
+                            model=MODEL, max_tokens=max_tok * 2,
+                            messages=[{"role": "user", "content": prompt}],
+                        )
+                        if resp.stop_reason == "max_tokens":
+                            print(f"    Batch {batch_idx+1}: still truncated, skipping")
                             continue
-                        p["source"] = "adversarial"
-                        parsed.append(p)
-                        batch_kept += 1
 
-                print(f"    Batch {batch_idx+1}: {len(examples)} generated, {batch_kept} kept")
+                    raw_text = resp.content[0].text.strip()
+                    examples = extract_json_array(raw_text)
 
-            except Exception as e:
-                print(f"    ✗ Batch {batch_idx+1} API error: {e}")
-                results["errors"].append({"task": task_id, "error": str(e)})
+                    if not examples:
+                        print(f"    Batch {batch_idx+1}: could not parse response")
+                        results["errors"].append({"task": task_id, "error": f"parse_failure_batch_{batch_idx}"})
+                        continue
+
+                    batch_kept = 0
+                    for ex in examples:
+                        p = parse_example(ex, task_id)
+                        if p:
+                            issues = validate_example(p)
+                            blocking = [i for i in issues if i["severity"] in ("critical", "high")
+                                        or i["check"] == "missing_required_tool"]
+                            if blocking:
+                                check_types = [i["check"] for i in blocking]
+                                print(f"      Rejected: {', '.join(check_types)}")
+                                continue
+                            p["source"] = "adversarial"
+                            parsed.append(p)
+                            batch_kept += 1
+
+                    print(f"    Batch {batch_idx+1}: {len(examples)} generated, {batch_kept} kept")
+
+                except Exception as e:
+                    print(f"    Batch {batch_idx+1} API error: {e}")
+                    results["errors"].append({"task": task_id, "error": str(e)})
 
         all_new.extend(parsed)
         results["per_task"][task_id] = len(parsed)
         results["total_generated"] += len(parsed)
-        print(f"    ✓ Generated {len(parsed)} adversarial examples total")
+        print(f"    Generated {len(parsed)} adversarial examples total")
 
     # Append to train file (adversarial examples go to train only, not val)
     if all_new:
         with open(TRAIN_FILE, "a") as f:
             for ex in all_new:
                 f.write(json.dumps(ex) + "\n")
-        print(f"\n✓ Appended {len(all_new)} adversarial examples to {TRAIN_FILE}")
+        print(f"\nAppended {len(all_new)} adversarial examples to {TRAIN_FILE}")
 
     # Write results for gate checking
     results_file = DATA_DIR / "adversarial_results.json"
