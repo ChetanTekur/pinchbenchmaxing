@@ -69,7 +69,7 @@ After generating or filtering data, **ALWAYS train before generating again.** Do
 
 1. **Read raw transcripts** — call `read_benchmark_transcript` with failing task IDs. See exactly what the model did wrong.
 2. **Form hypotheses** — from the raw output, identify: wrong tool? wrong filename? stopped too early? looped?
-3. **Check if training data teaches the same problem** — call `validate_data` to check tool names and schemas. Think critically: even if validation says "clean," the data might teach incomplete behavior.
+3. **Check if training data teaches the same problem** — call `validate_data` to check tool names and schemas. **`ready_for_training = true` does NOT mean the data is good.** It only means there are no structural blockers. Cross-reference validation issues with benchmark scores: if a task scores <30% AND has validation issues (missing_required_tool, truncated_response, unknown_arg), those issues are the likely cause of failure -- treat them as critical and fix them, even if the validator labels them "medium."
 4. **Compare with previous version** — which tasks got better, which got worse? If a task was fine before you added data, the new data was bad.
 
 ### Phase 2: Fix Data
@@ -132,7 +132,10 @@ You are in a stateful conversation — you remember previous turns. Use `write_n
 
 ### Score regression after training
 
-Call `compare_data`. If regressed tasks lost data, restore those specific tasks with `restore_gold_data(tasks=[...])` — do NOT restore everything, keep the improvements that worked. If data is intact, call `read_benchmark_transcript` on the regressed tasks to understand what the new data broke.
+1. `compare_data` — check if regressed tasks lost data.
+2. If data was lost: `restore_gold_data(tasks=[...])` for regressed tasks only. Keep improvements that worked.
+3. If data is intact: `read_benchmark_transcript` on regressed tasks to understand what new data broke.
+4. **Do not stop here.** Restoring only recovers the best-ever score. If best-ever < target, also improve chronically weak tasks (those already <70% in the best version) before training. Read their transcripts, diagnose, generate targeted data.
 
 ### Training BLOCKED
 

@@ -348,7 +348,7 @@ Examine the state above and take ONE action. Call a tool, or respond with "DONE:
 # ORCHESTRATOR LOOP
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = False, regression_note: str = ""):
+def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = False):
     from tools.registry import TOOL_SCHEMAS, execute_tool
 
     # ── Preflight checks — verify environment before any work ────────────
@@ -493,9 +493,6 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
         # subsequent turns were already extended with tool_result + next user nudge
         if not messages:
             first_msg = turn_context
-            if regression_note:
-                first_msg = f"## REGRESSION CONTEXT\n{regression_note}\n\n{turn_context}"
-                regression_note = ""  # only inject once
             # Clear directive after first turn — it's in the conversation now
             state.scratchpad = [n for n in state.scratchpad if not n.get("is_directive")]
             messages.append({"role": "user", "content": first_msg})
@@ -793,18 +790,6 @@ def main():
             state.last_data_summary = {}
             log_print(f"[ORCHESTRATOR AGENT] Fresh start — all state cleared")
 
-        # ── Regression detection: inform the orchestrator, let it decide ──
-        regression_note = ""
-        if state.best_version > 0 and state.model_version > state.best_version:
-            regression_note = (
-                f"REGRESSION DETECTED: v{state.model_version} scored {state.avg_score:.1%} "
-                f"but best was v{state.best_version} at {state.best_avg_score:.1%}. "
-                f"The current training data produced a worse model. "
-                f"Use `restore_gold_data` to roll back to v{state.best_version}'s dataset, "
-                f"or diagnose what went wrong first and decide whether to restore or fix in-place."
-            )
-            log_print(f"[ORCHESTRATOR AGENT] {regression_note}")
-
         # Seed scratchpad note from CLI
         if args.note:
             state.scratchpad.append({
@@ -815,7 +800,7 @@ def main():
             log_print(f"[ORCHESTRATOR AGENT] Directive: {args.note}")
 
         save_state(state, state_file)
-        run_orchestrator(cfg, state, state_file, dry_run=args.dry_run, regression_note=regression_note)
+        run_orchestrator(cfg, state, state_file, dry_run=args.dry_run)
 
     elif args.command == "status":
         state_file = cfg.data_dir / STATE_FILE_NAME
