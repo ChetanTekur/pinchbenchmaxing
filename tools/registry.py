@@ -413,10 +413,8 @@ TOOL_SCHEMAS = [
         "name": "restore_gold_data",
         "description": (
             "Restore training data from the best-scoring version. "
-            "Downloads from HuggingFace (or local cache) and overwrites "
-            "the current train.jsonl and val.jsonl. Use after diagnosing "
-            "a regression to roll back to proven good data before making "
-            "targeted improvements."
+            "If tasks is provided, only restore those tasks from gold — keeps "
+            "improvements for other tasks intact. Without tasks, restores everything."
         ),
         "input_schema": {
             "type": "object",
@@ -424,6 +422,11 @@ TOOL_SCHEMAS = [
                 "version": {
                     "type": "integer",
                     "description": "Version to restore (defaults to best_version from state).",
+                },
+                "tasks": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Only restore these task IDs from gold (others kept as-is).",
                 },
             },
             "required": [],

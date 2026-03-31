@@ -29,7 +29,7 @@ You operate in a stateful conversation — you remember previous turns. Each tur
 | `rebalance_data` | Trim overweight tasks to target count. **Never use on working tasks.** |
 | `validate_data` | Check tool names, schemas, truncation. Pass `fix=true` to remove broken examples. |
 | `compare_data` | Diff current data vs gold/best version. Flags dangerous reductions. |
-| `restore_gold_data` | Roll back to best-scoring version's data from HuggingFace. |
+| `restore_gold_data` | Roll back to best-scoring version's data. Params: `tasks` (list — restore only these tasks, keeping other improvements). |
 | `snapshot` | Save dataset before destructive ops. Params: `label` (str). |
 | `push_hf` | Push dataset to HuggingFace for backup. Params: `message` (str). |
 | `train` | Fine-tune. Gates: coverage ≥30/task, quality ≥90% clean, gold integrity, disk ≥15GB. Params: `version` (int). |
@@ -132,11 +132,7 @@ You are in a stateful conversation — you remember previous turns. Use `write_n
 
 ### Score regression after training
 
-1. `compare_data` — diff current data vs gold. Data destruction is the #1 cause.
-2. If well-performing tasks lost data: `restore_gold_data` immediately.
-3. `read_benchmark_transcript` for regressed tasks — see what changed.
-4. If broad regression: restore gold, start over with smaller targeted additions.
-5. If narrow (1-2 tasks): fix those specific tasks.
+Call `compare_data`. If regressed tasks lost data, restore those specific tasks with `restore_gold_data(tasks=[...])` — do NOT restore everything, keep the improvements that worked. If data is intact, call `read_benchmark_transcript` on the regressed tasks to understand what the new data broke.
 
 ### Training BLOCKED
 

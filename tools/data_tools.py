@@ -952,9 +952,18 @@ def read_benchmark_transcript(args: dict, cfg, state) -> dict:
 # ── restore_gold_data ────────────────────────────────────────────────────────
 
 def restore_gold_data(args: dict, cfg, state) -> dict:
-    """Restore training data from the best-scoring version via HuggingFace."""
+    """Restore training data from the best-scoring version via HuggingFace.
+
+    If tasks is provided, only restore those tasks from gold — keep current
+    data for all other tasks. This preserves improvements while reverting
+    regressions.
+    """
     try:
         version = args.get("version", state.best_version)
+        target_tasks = args.get("tasks", [])
+        if isinstance(target_tasks, str):
+            target_tasks = [t.strip() for t in target_tasks.split(",") if t.strip()]
+
         if not version or version <= 0:
             return {"status": "error", "error": "No best version to restore from"}
 
@@ -974,9 +983,52 @@ def restore_gold_data(args: dict, cfg, state) -> dict:
             return {"status": "error", "error": f"No 'Pre-v{version}' commit found on HuggingFace"}
 
         log_print(f"  [restore_gold_data] Found revision {target_revision[:8]}")
-        for fname in ["train.jsonl", "val.jsonl"]:
-            path = hf_hub_download(hf_repo, fname, revision=target_revision, repo_type="dataset")
-            shutil.copy2(path, str(cfg.data_dir / fname))
+
+        if target_tasks:
+            # Selective restore: only replace specified tasks, keep others
+            log_print(f"  [restore_gold_data] Selective restore for: {target_tasks}")
+
+            # Download gold train to temp location
+            gold_path = hf_hub_download(hf_repo, "train.jsonl", revision=target_revision, repo_type="dataset")
+
+            # Load gold examples for target tasks
+            gold_by_task = {}
+            for line in open(gold_path).readlines():
+                if line.strip():
+                    try:
+                        ex = json.loads(line)
+                        tid = ex.get("task_id", "")
+                        if tid in target_tasks:
+                            gold_by_task.setdefault(tid, []).append(line.strip())
+                    except json.JSONDecodeError:
+                        pass
+
+            # Load current train, keep non-target tasks, replace target tasks with gold
+            kept_lines = []
+            train_file = cfg.data_dir / "train.jsonl"
+            if train_file.exists():
+                for line in train_file.read_text().splitlines():
+                    if not line.strip():
+                        continue
+                    try:
+                        tid = json.loads(line).get("task_id", "")
+                        if tid not in target_tasks:
+                            kept_lines.append(line)
+                    except json.JSONDecodeError:
+                        kept_lines.append(line)
+
+            # Add gold examples for target tasks
+            for tid in target_tasks:
+                gold_examples = gold_by_task.get(tid, [])
+                kept_lines.extend(gold_examples)
+                log_print(f"  [restore_gold_data] {tid}: replaced with {len(gold_examples)} gold examples")
+
+            train_file.write_text("\n".join(kept_lines) + "\n" if kept_lines else "")
+        else:
+            # Full restore: replace everything
+            for fname in ["train.jsonl", "val.jsonl"]:
+                path = hf_hub_download(hf_repo, fname, revision=target_revision, repo_type="dataset")
+                shutil.copy2(path, str(cfg.data_dir / fname))
 
         # Count restored data (train + val, matching inspect_data)
         from collections import Counter
