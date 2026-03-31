@@ -532,9 +532,8 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
         tool_args = tool_use_block.input or {}
 
         if tool_name in GENERATION_TOOLS and state.diagnosis_required:
-            log_print(f"[ORCHESTRATOR AGENT] BLOCKED: {tool_name} requires diagnosis first.")
-            log_print(f"[ORCHESTRATOR AGENT] Call 'diagnose' to understand WHY tasks are failing before generating data.")
-            # Feed the block as a tool_result so the API is happy
+            log_print(f"[ORCHESTRATOR AGENT] BLOCKED: {tool_name} requires analysis first.")
+            log_print(f"[ORCHESTRATOR AGENT] Call 'read_benchmark_transcript' or 'diagnose' to understand WHY tasks fail before generating data.")
             messages.append({"role": "assistant", "content": response.content})
             messages.append({
                 "role": "user",
@@ -543,9 +542,9 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
                         "type": "tool_result",
                         "tool_use_id": tool_use_block.id,
                         "content": (
-                            f"BLOCKED: {tool_name} is not allowed until you call 'diagnose' first. "
-                            f"You have {MAX_DIAGNOSE_PER_CYCLE - state.diagnose_count} diagnose calls remaining this cycle. "
-                            f"Understand WHY tasks are failing before generating data. Call diagnose now."
+                            f"BLOCKED: {tool_name} is not allowed until you analyze failures first. "
+                            f"Call 'read_benchmark_transcript' with the failing task IDs to see the raw model output, "
+                            f"then 'diagnose' for structured analysis. Understand WHY tasks are failing before generating data."
                         ),
                         "is_error": True,
                     }
@@ -619,17 +618,11 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
             else:
                 state.diagnosis_required = False
 
-        # After diagnose: count it, unlock generation when done
-        if tool_name == "diagnose" and status == "success":
+        # After diagnosis/transcript reading: unlock generation
+        if tool_name in ("diagnose", "read_benchmark_transcript") and status == "success":
             state.diagnose_count += 1
-            if state.diagnose_count >= MAX_DIAGNOSE_PER_CYCLE:
-                state.diagnosis_required = False
-                log_print(f"[ORCHESTRATOR AGENT] Diagnosis gate OFF: {state.diagnose_count} diagnoses complete. Generation unlocked.")
-            else:
-                # After first diagnose, also unlock — the point is at least one diagnosis ran.
-                # Keep the flag so a second diagnose is allowed but not required.
-                state.diagnosis_required = False
-                log_print(f"[ORCHESTRATOR AGENT] Diagnosis gate OFF: diagnosis complete. Generation unlocked.")
+            state.diagnosis_required = False
+            log_print(f"[ORCHESTRATOR AGENT] Analysis gate OFF: {tool_name} complete. Generation unlocked.")
 
         # ── Score regression check after benchmark ────────────────────────
         if tool_name == "benchmark" and status == "success" and state.best_avg_score > 0:
