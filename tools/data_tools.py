@@ -806,7 +806,7 @@ def read_benchmark_transcript(args: dict, cfg, state) -> dict:
     Params:
       tasks: list of task IDs to read transcripts for
       version: model version (default: current). Used to find the right log file.
-      max_chars: max characters per task transcript (default: 3000)
+      max_chars: max characters per task transcript (default: 10000)
     """
     try:
         tasks = args.get("tasks", [])
@@ -815,7 +815,7 @@ def read_benchmark_transcript(args: dict, cfg, state) -> dict:
         if not tasks:
             return {"status": "error", "error": "No tasks specified"}
 
-        max_chars = args.get("max_chars", 3000)
+        max_chars = args.get("max_chars", 10000)
         version = args.get("version", state.model_version)
 
         # Find the benchmark log file
