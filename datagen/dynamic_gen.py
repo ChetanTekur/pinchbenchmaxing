@@ -510,14 +510,27 @@ def _pilot_batch(task_id: str, task_def: dict, client, prompt: str,
         max_tok = DEFAULT_MAX_TOK
     custom_id = f"pilot__{task_id}__attempt"
 
-    batch = client.messages.batches.create(requests=[{
-        "custom_id": custom_id,
-        "params": {
-            "model": MODEL,
-            "max_tokens": max_tok,
-            "messages": [{"role": "user", "content": prompt}],
-        },
-    }])
+    # Retry on transient API errors (500, 529, etc.)
+    for attempt in range(3):
+        try:
+            batch = client.messages.batches.create(requests=[{
+                "custom_id": custom_id,
+                "params": {
+                    "model": MODEL,
+                    "max_tokens": max_tok,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            }])
+            break
+        except Exception as e:
+            if attempt < 2:
+                print(f"    API error (attempt {attempt+1}/3): {e}")
+                time.sleep(10 * (attempt + 1))
+            else:
+                print(f"    API error (attempt 3/3): {e}")
+                meta = {"stop_reason": None, "was_truncated": False, "max_tokens_used": max_tok,
+                        "input_tokens": 0, "output_tokens": 0}
+                return [], meta
 
     # Poll until done
     while True:
