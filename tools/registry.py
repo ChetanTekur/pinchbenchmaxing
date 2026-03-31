@@ -88,8 +88,8 @@ TOOL_SCHEMAS = [
     {
         "name": "generate_data",
         "description": (
-            "Generate targeted training data for specified tasks using "
-            "the targeted topup script. Supports diagnosis-aware generation."
+            "Generate targeted training data for specified tasks with pilot-validate-refine flow. "
+            "Auto-uses diagnosis from last diagnose call. Self-heals truncation issues."
         ),
         "input_schema": {
             "type": "object",

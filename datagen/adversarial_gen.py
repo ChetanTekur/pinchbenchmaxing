@@ -26,6 +26,7 @@ import anthropic
 from utils.config import load_config
 from utils.prompts import OPENCLAW_SYSTEM
 from datagen.topup import TASKS, parse_example, extract_json_array
+from datagen.dynamic_gen import HARD_TASKS
 
 _cfg       = load_config()
 DATA_DIR   = _cfg.data_dir
@@ -238,7 +239,7 @@ def _adversarial_pilot(task_id: str, task: dict, failure: dict, client,
     from datagen.task_loader import load_tasks
 
     batch_size = 3
-    max_tok = 8192
+    max_tok = 16000 if task_id in HARD_TASKS else 8192
     failure_log = []
 
     # Load ground truth for semantic check
@@ -400,10 +401,7 @@ def cmd_run(log_dir: Path, tasks: list[str], n_per_task: int = EXAMPLES_PER_TASK
         remaining = n_per_task - len(parsed)
         if remaining > 0:
             # Determine safe parameters from pilot
-            max_tok = 16000 if task_id in ("task_09_files", "task_10_workflow",
-                "task_15_daily_summary", "task_16_email_triage", "task_17_email_search",
-                "task_18_market_research", "task_19_spreadsheet_summary",
-                "task_21_openclaw_comprehension") else 8192
+            max_tok = 16000 if task_id in HARD_TASKS else 8192
             BATCH_SIZE = 3
             n_batches = (remaining + BATCH_SIZE - 1) // BATCH_SIZE
 
