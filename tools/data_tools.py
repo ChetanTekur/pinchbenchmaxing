@@ -276,35 +276,47 @@ def generate_data(args: dict, cfg, state) -> dict:
         except Exception as e:
             log_print(f"  [generate_data] Analyzer failed ({e}), proceeding without guard")
 
-        # Use targeted_topup (task definitions that match what scores well)
-        # NOT dynamic_gen (reads PinchBench .md files which have different definitions)
-        script = str(_PROJECT_ROOT / "datagen" / "targeted_topup.py")
+        # Use dynamic_gen with pilot-validate-refine flow
+        # Each example is validated against task requirements before entering the dataset
+        script = str(_PROJECT_ROOT / "datagen" / "dynamic_gen.py")
+
+        # Count before generation
+        from collections import Counter as _Before
+        before = _Before()
+        if cfg.train_file.exists():
+            for _line in cfg.train_file.read_text().splitlines():
+                if _line.strip():
+                    try:
+                        before[json.loads(_line).get("task_id", "")] += 1
+                    except json.JSONDecodeError:
+                        pass
+
+        cmd = [
+            sys.executable, script, "run",
+            "--tasks", ",".join(tasks),
+            "--min-per-task", str(min_per_task),
+        ]
+        if diagnosis_file:
+            cmd.extend(["--diagnosis-file", str(diagnosis_file)])
+
+        rc, output = _run_script(cmd, "generate")
+
+        # Count after generation to compute actual delta per task
+        after = _Before()
+        if cfg.train_file.exists():
+            for _line in cfg.train_file.read_text().splitlines():
+                if _line.strip():
+                    try:
+                        after[json.loads(_line).get("task_id", "")] += 1
+                    except json.JSONDecodeError:
+                        pass
+
         generated = {}
         total_generated = 0
-
         for task in tasks:
-            cmd = [
-                sys.executable, script, "run",
-                "--tasks", task,
-                "--min-per-task", str(min_per_task),
-            ]
-            if diagnosis_file:
-                cmd.extend(["--diagnosis-file", str(diagnosis_file)])
-
-            rc, output = _run_script(cmd, f"generate:{task}")
-
-            # Parse actual count from output instead of assuming
-            import re
-            actual = 0
-            for line in output.splitlines():
-                m = re.search(r'\+\s*(\d+)', line)
-                if m:
-                    actual += int(m.group(1))
-            generated[task] = {"returncode": rc, "added": actual}
-            total_generated += actual
-
-            if rc == 2:
-                generated[task]["note"] = "no new data needed"
+            added = after.get(task, 0) - before.get(task, 0)
+            generated[task] = {"returncode": rc, "added": added}
+            total_generated += added
 
         return {
             "status": "success",
@@ -312,7 +324,7 @@ def generate_data(args: dict, cfg, state) -> dict:
                 "generated": total_generated,
                 "per_task": generated,
             },
-            "cost_usd": total_generated * 0.04,  # actual examples generated
+            "cost_usd": total_generated * 0.04,
         }
     except Exception as e:
         return {"status": "error", "error": str(e)}

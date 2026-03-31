@@ -290,13 +290,24 @@ def cmd_run(log_dir: Path, tasks: list[str], n_per_task: int = EXAMPLES_PER_TASK
                     results["errors"].append({"task": task_id, "error": f"parse_failure_batch_{batch_idx}"})
                     continue
 
+                from datagen.validate_data import validate_example
+                batch_kept = 0
                 for ex in examples:
                     p = parse_example(ex, task_id)
                     if p:
+                        # Validate before accepting — reject structurally bad examples
+                        issues = validate_example(p)
+                        blocking = [i for i in issues if i["severity"] in ("critical", "high")
+                                    or i["check"] == "missing_required_tool"]
+                        if blocking:
+                            check_types = [i["check"] for i in blocking]
+                            print(f"      ✗ Rejected: {', '.join(check_types)}")
+                            continue
                         p["source"] = "adversarial"
                         parsed.append(p)
+                        batch_kept += 1
 
-                print(f"    Batch {batch_idx+1}: {len(examples)} examples")
+                print(f"    Batch {batch_idx+1}: {len(examples)} generated, {batch_kept} kept")
 
             except Exception as e:
                 print(f"    ✗ Batch {batch_idx+1} API error: {e}")
