@@ -274,7 +274,7 @@ def train(args: dict, cfg, state) -> dict:
         for action in state.action_history:
             act = action.get("action", "")
             summary = action.get("result_summary", "")[:100]
-            if act in ("generate_data", "generate_adversarial", "filter_data",
+            if act in ("generate_data", "filter_data",
                        "dedup_data", "rebalance_data", "validate_data"):
                 changelog.append(f"{act}: {summary}")
 

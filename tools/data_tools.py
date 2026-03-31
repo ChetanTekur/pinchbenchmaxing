@@ -1,7 +1,7 @@
 """
 Data tool implementations for PinchBench Maxing agent.
 
-Tools: inspect_data, generate_data, generate_adversarial, score_data,
+Tools: inspect_data, generate_data, score_data,
        filter_data, repair_data, dedup_data, rebalance_data, snapshot, push_hf
 
 Each function signature: def tool_name(args: dict, cfg, state) -> dict
