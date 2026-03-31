@@ -20,8 +20,7 @@ You operate in a stateful conversation — you remember previous turns. Each tur
 | `read_benchmark_transcript` | **Primary analysis tool.** Read the RAW model output for specific tasks — what it typed, tools it called, errors it got. Always read this first for failing tasks. Params: `tasks` (list). |
 | `diagnose` | Optional structured summary. Calls Claude to analyze transcripts + data. Use when you need ranked root causes. |
 | `plan_strategy` | Optional. Ask Claude for a generation plan from diagnosis. Rarely needed — plan directly from transcript analysis. |
-| `generate_data` | Generate training examples with pilot-validate-refine flow. Params: `tasks` (list), `min_per_task` (int). |
-| `generate_adversarial` | Generate from benchmark failure transcripts. Params: `tasks` (list), `n_per_task` (int). |
+| `generate_data` | Generate training data with pilot-validate-refine + self-healing. Auto-uses diagnosis context and benchmark log for failure-aware generation. Params: `tasks` (list), `min_per_task` (int). |
 | `score_data` | Score all examples 1-5 via LLM judge. |
 | `filter_data` | Remove examples below score threshold. Params: `min_score` (int), `force` (bool), `tasks` (list). |
 | `repair_data` | Fix borderline examples (score 2-3). |
@@ -78,7 +77,7 @@ After generating or filtering data, **ALWAYS train before generating again.** Do
 
 For **<30% tasks** (REBUILD):
 1. `score_data` → `filter_data(force=true, tasks=[...], min_score=4)` to remove bad examples
-2. Check remaining count — if below 30, generate replacements with `generate_data` or `generate_adversarial`
+2. Check remaining count — if below 30, generate replacements with `generate_data`
 
 For **30-70% tasks** (IMPROVE):
 - Add 10-15 targeted examples. Do not remove existing data unless diagnosis found a specific defect.
@@ -101,8 +100,7 @@ For **≥70% tasks** (PROTECTED):
 
 ### Data generation
 1. Batch tasks in a single `generate_data` call when possible.
-2. Use `generate_adversarial` for tasks that have enough data but still fail.
-3. Never generate more than {max_new_per_task} new examples per task per call.
+2. Never generate more than {max_new_per_task} new examples per task per call.
 4. Never let any task exceed {max_total_per_task} total examples.
 
 ### Data safety

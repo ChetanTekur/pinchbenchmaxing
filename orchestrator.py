@@ -29,6 +29,42 @@ PROJECT_ROOT = Path(__file__).parent
 STATE_FILE_NAME = "loop_state.json"
 
 
+# ── Score seeding (moved from loop.py) ────────────────────────────────────────
+
+def parse_scores_from_log(log_path: str) -> dict[str, float]:
+    """Parse per-task scores from a benchmark log file."""
+    from agents.base import TASK_IDS
+    scores: dict[str, float] = {}
+    text = Path(log_path).read_text(errors="replace")
+    for m in re.compile(r'(task_\d{2}_\w+)["\s:]*\s+([01](?:\.\d+)?)').finditer(text):
+        if m.group(1) in TASK_IDS:
+            scores[m.group(1)] = float(m.group(2))
+    for blob in re.compile(r'\{[^{}]*"task_\d{2}_\w+"[^{}]*\}').findall(text):
+        try:
+            obj = json.loads(blob)
+            for k, v in obj.items():
+                if k in TASK_IDS and isinstance(v, (int, float)):
+                    scores[k] = float(v)
+        except json.JSONDecodeError:
+            pass
+    return scores
+
+
+def parse_scores_from_json_str(json_str: str) -> dict[str, float]:
+    """Parse per-task scores from a JSON string."""
+    from agents.base import TASK_IDS
+    raw = json.loads(json_str)
+    scores: dict[str, float] = {}
+    for k, v in raw.items():
+        if k in TASK_IDS:
+            scores[k] = float(v)
+        else:
+            matched = [t for t in TASK_IDS if t.startswith(k)]
+            if len(matched) == 1:
+                scores[matched[0]] = float(v)
+    return scores
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STATE
 # ─────────────────────────────────────────────────────────────────────────────
@@ -86,11 +122,6 @@ def _format_result(tool_name: str, r: dict) -> str:
         total = r.get("generated", 0)
         per = r.get("per_task", {})
         return f"{total} examples generated across {len(per)} tasks"
-
-    elif tool_name == "generate_adversarial":
-        total = r.get("generated", 0)
-        per = r.get("per_task", {})
-        return f"{total} adversarial examples across {len(per)} tasks"
 
     elif tool_name == "train":
         name = r.get("model_name", "?")
@@ -306,7 +337,7 @@ def build_turn_context(state: AgentState, cfg) -> str:
     if state.diagnosis_required:
         gate_text = (
             "\n## DIAGNOSIS REQUIRED\n"
-            "generate_data and generate_adversarial are BLOCKED until you call `diagnose`.\n"
+            "generate_data is BLOCKED until you call `diagnose`.\n"
             "Understand WHY tasks are failing before generating more data.\n"
         )
 
@@ -439,7 +470,7 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
     messages = []
 
     # Tools that are blocked until diagnose runs after a benchmark
-    GENERATION_TOOLS = {"generate_data", "generate_adversarial"}
+    GENERATION_TOOLS = {"generate_data"}
     MAX_DIAGNOSE_PER_CYCLE = 2  # prevent analysis paralysis
 
     # If scores exist at session start (seeded via --log/--scores), require diagnosis
@@ -475,7 +506,7 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
         # reaching training, we're stuck in a generate→validate loop
         recent = state.action_history[-10:] if len(state.action_history) >= 10 else []
         if len(recent) >= 10:
-            gen_count = sum(1 for a in recent if a["action"] in ("generate_data", "generate_adversarial"))
+            gen_count = sum(1 for a in recent if a["action"] == "generate_data")
             train_count = sum(1 for a in recent if a["action"] == "train")
             if gen_count >= 5 and train_count == 0:
                 log_print(f"\n[ORCHESTRATOR AGENT] LOOP DETECTED: {gen_count} generation calls in last 10 actions without training. Stopping.")
@@ -639,7 +670,7 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
                 state.diagnosis_required = True
                 state.diagnose_count = 0
                 log_print(f"[ORCHESTRATOR AGENT] Diagnosis gate ON: {len(zeros)} zero-score tasks. "
-                          f"Must call diagnose before generate_data/generate_adversarial.")
+                          f"Must call diagnose before generate_data.")
             else:
                 state.diagnosis_required = False
 
@@ -651,7 +682,7 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
 
         # ── Auto-refresh data summary after mutations ─────────────────────
         DATA_MUTATING_TOOLS = {
-            "generate_data", "generate_adversarial", "filter_data",
+            "generate_data", "filter_data",
             "dedup_data", "rebalance_data", "validate_data",
             "restore_gold_data",
         }
@@ -766,12 +797,10 @@ def main():
 
         # Seed scores
         if args.scores:
-            from loop import parse_scores_from_json_str
             seeded = parse_scores_from_json_str(args.scores)
             state.record_eval(seeded)
             log_print(f"[ORCHESTRATOR AGENT] Seeded {len(seeded)} scores")
         elif args.log:
-            from loop import parse_scores_from_log
             seeded = parse_scores_from_log(args.log)
             state.record_eval(seeded)
             log_print(f"[ORCHESTRATOR AGENT] Seeded {len(seeded)} scores from {args.log}")

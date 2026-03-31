@@ -32,7 +32,7 @@ import anthropic
 from utils.config import load_config
 from utils.prompts import OPENCLAW_SYSTEM, VALID_TOOLS
 from datagen.task_loader import load_tasks, load_task
-from datagen.topup import (
+from datagen.utils import (
     VARIATION_CONFIGS,
     parse_example, extract_json_array,
     count_existing,
@@ -51,22 +51,9 @@ MODEL      = _cfg.claude.generation
 TARGET_PER_TASK = _cfg.data.examples_per_task
 VAL_SPLIT  = _cfg.data.val_split
 
-# Tasks that produce long examples — generate 1 per call to avoid truncation
-HARD_TASKS = {
-    "task_09_files",
-    "task_10_workflow",
-    "task_15_daily_summary",
-    "task_16_email_triage",
-    "task_17_email_search",
-    "task_18_market_research",
-    "task_19_spreadsheet_summary",  # Python code + CSV/Excel data = long examples
-    "task_21_openclaw_comprehension",
-}
-
-
-def _epc(task_id: str) -> int:
-    """Examples per Claude call for this task."""
-    return 1 if task_id in HARD_TASKS else 3
+# Default generation parameters -- self-healing pilot adjusts dynamically
+DEFAULT_EPC = 3        # examples per call (reduced to 1 on truncation)
+DEFAULT_MAX_TOK = 8192  # increased up to 32K on truncation
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -374,9 +361,9 @@ def cmd_submit(
     requests = []
     for task_id, needed in deficits.items():
         task_def = tasks[task_id]
-        epc = _epc(task_id)
+        epc = DEFAULT_EPC
         n_calls = (needed + epc - 1) // epc
-        max_tok = 16000 if task_id in HARD_TASKS else 8192
+        max_tok = DEFAULT_MAX_TOK
 
         # Get diagnosis for this task (may be empty)
         task_diag = diagnosis.get(task_id)
@@ -402,7 +389,7 @@ def cmd_submit(
     BATCH_FILE.write_text(batch.id)
 
     total_examples = sum(
-        _epc(r["custom_id"].split("__")[1]) for r in requests
+        DEFAULT_EPC for r in requests
     )
     print(f"\n  Submitted {len(requests)} requests -> ~{total_examples} new examples")
     print(f"  Batch ID: {batch.id}  (saved to {BATCH_FILE})")
@@ -520,7 +507,7 @@ def _pilot_batch(task_id: str, task_def: dict, client, prompt: str,
     metadata includes: stop_reason, was_truncated, max_tokens_used, prompt_tokens
     """
     if max_tok is None:
-        max_tok = 16000 if task_id in HARD_TASKS else 8192
+        max_tok = DEFAULT_MAX_TOK
     custom_id = f"pilot__{task_id}__attempt"
 
     batch = client.messages.batches.create(requests=[{
@@ -565,8 +552,11 @@ def _pilot_batch(task_id: str, task_def: dict, client, prompt: str,
 
 
 def _pilot_generate(task_id: str, task_def: dict, client, diagnosis: dict | None = None,
-                     max_attempts: int = 3) -> tuple[str, list]:
+                     failure: dict | None = None, max_attempts: int = 3) -> tuple[str, list]:
     """Generate pilot examples, validate, self-heal, retry. Returns (verdict, examples).
+
+    Args:
+        failure: if provided, uses adversarial prompt (from benchmark failure transcripts)
 
     Self-healing capabilities:
     - Truncation: detects stop_reason=max_tokens, auto-increases max_tokens and reduces epc
@@ -577,8 +567,8 @@ def _pilot_generate(task_id: str, task_def: dict, client, diagnosis: dict | None
     from datagen.deep_validate import semantic_check
 
     variation = VARIATION_CONFIGS[0]
-    epc = min(3, _epc(task_id) * 3)
-    max_tok = 16000 if task_id in HARD_TASKS else 8192
+    epc = DEFAULT_EPC
+    max_tok = DEFAULT_MAX_TOK
     refinement_feedback = ""
     verdict = "FAILED"
     parsed = []
@@ -587,7 +577,10 @@ def _pilot_generate(task_id: str, task_def: dict, client, diagnosis: dict | None
     for attempt in range(1, max_attempts + 1):
         print(f"\n    Pilot attempt {attempt}/{max_attempts} for {task_id} (epc={epc}, max_tok={max_tok})...")
 
-        prompt = build_dynamic_meta_prompt(task_id, task_def, variation, epc, diagnosis=diagnosis)
+        if failure:
+            prompt = build_adversarial_prompt(task_id, task_def, failure, epc)
+        else:
+            prompt = build_dynamic_meta_prompt(task_id, task_def, variation, epc, diagnosis=diagnosis)
         if refinement_feedback:
             prompt += f"""
 
@@ -689,22 +682,154 @@ Generate improved examples that address ALL the issues above.
     return "BAD", []  # return empty -- do not save bad data
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ADVERSARIAL MODE -- generates from benchmark failure transcripts
+# ─────────────────────────────────────────────────────────────────────────────
+
+def find_latest_log(log_dir: Path) -> Path | None:
+    """Find the most recent benchmark log file."""
+    logs = sorted(log_dir.glob("bench_*.log"),
+                  key=lambda p: p.stat().st_mtime, reverse=True)
+    return logs[0] if logs else None
+
+
+def extract_task_section(log_text: str, task_id: str) -> str | None:
+    """Extract the section of a benchmark log for a specific task."""
+    pattern = rf'starting task: {re.escape(task_id)}.*?(?=starting task:|$)'
+    m = re.search(pattern, log_text, re.DOTALL)
+    return m.group() if m else None
+
+
+def extract_failure_pattern(section: str, task_id: str) -> dict:
+    """Analyze a task section to identify what the model did wrong."""
+    result = {
+        "task_id": task_id,
+        "score": None,
+        "judge_notes": "",
+        "patterns": [],
+        "errors": [],
+    }
+
+    score_match = re.search(
+        rf'Task {re.escape(task_id)}:\s*([01](?:\.\d+)?)/1\.0\s*\((\d+)%\)\s*-\s*(\w+)',
+        section
+    )
+    if score_match:
+        result["score"] = float(score_match.group(1))
+
+    notes_match = re.search(r'Notes:\s*(.+?)(?:\n={5,}|\Z)', section, re.DOTALL)
+    if notes_match:
+        result["judge_notes"] = notes_match.group(1).strip()[:500]
+
+    section_lower = section.lower()
+    if section_lower.count("tool_call") > 10:
+        result["patterns"].append("excessive_tool_calls")
+    if "loop" in section_lower or section_lower.count("read_file") > 5:
+        result["patterns"].append("looping")
+    if "not found" in section_lower or "no such file" in section_lower:
+        result["patterns"].append("wrong_filename")
+    if "pk" in section_lower and "bytes" in section_lower:
+        result["patterns"].append("binary_as_text")
+    if "truncat" in section_lower or "cut off" in section_lower:
+        result["patterns"].append("truncation")
+    for line in section.splitlines():
+        if re.search(r'\bERROR\b', line):
+            result["errors"].append(line.strip()[:200])
+        if "Failed to parse transcript" in line:
+            result["patterns"].append("malformed_output")
+            break
+
+    return result
+
+
+def build_adversarial_prompt(
+    task_id: str, task_def: dict, failure: dict, n_examples: int = 3,
+) -> str:
+    """Build a prompt showing the model's failure and asking for correct examples."""
+    raw_content = task_def.get("raw_content", "")
+    if len(raw_content) > 4000:
+        raw_content = raw_content[:4000] + "\n\n[... truncated ...]"
+
+    failure_lines = []
+    if failure.get("judge_notes"):
+        failure_lines.append(f"Judge notes: {failure['judge_notes']}")
+    pattern_descriptions = {
+        "looping": "The model got stuck in a loop, calling the same tool repeatedly",
+        "wrong_filename": "The model tried to read a nonexistent file instead of the correct one",
+        "binary_as_text": "The model read a binary file (xlsx/pdf) as raw text, getting garbage bytes",
+        "excessive_tool_calls": "The model made too many tool calls without progress",
+        "truncation": "The model's response was truncated mid-sentence",
+        "malformed_output": "The model produced malformed output that couldn't be parsed",
+    }
+    for p in failure.get("patterns", []):
+        if p in pattern_descriptions:
+            failure_lines.append(f"Pattern: {pattern_descriptions[p]}")
+    if failure.get("errors"):
+        failure_lines.append(f"Errors from log: {failure['errors'][:2]}")
+
+    failure_text = "\n".join(failure_lines) if failure_lines else "Task failed with low score."
+    score_text = f"{failure['score']:.1f}/1.0" if failure.get("score") is not None else "unknown"
+    tools_list = ", ".join(sorted(VALID_TOOLS))
+
+    return f"""\
+You are generating TARGETED training data for an LLM agent called Clawd.
+
+The model FAILED this task during benchmarking. Your job is to generate
+{n_examples} training examples showing the CORRECT approach.
+
+## Agent System Prompt
+{OPENCLAW_SYSTEM}
+
+## Benchmark Task Definition
+{raw_content}
+
+## What the Model Did WRONG (score: {score_text})
+{failure_text}
+
+## Your Job
+Generate {n_examples} training examples that demonstrate the CORRECT approach.
+Each example must:
+1. AVOID the failure patterns described above
+2. Complete the task cleanly and efficiently
+3. Satisfy ALL grading criteria
+4. Use the correct tools with the correct arguments
+5. If the task involves reading binary files (.xlsx, .pdf), use run_python
+   with appropriate libraries (pandas, pdfplumber) instead of read_file
+
+Each example MUST follow this JSON structure:
+{{
+  "user_message": "<user request>",
+  "turns": [
+    {{"role": "assistant", "content": "<action with <tool_call> tags>"}},
+    {{"role": "tool_result", "content": "<realistic tool output>"}},
+    ... more turns ...
+    {{"role": "assistant", "content": "<final confirmation>"}}
+  ]
+}}
+
+Tool call format: <tool_call>{{"name": "tool_name", "arguments": {{"arg": "value"}}}}</tool_call>
+
+ONLY USE REAL CLAWD TOOLS: {tools_list}
+
+Return ONLY a valid JSON array of {n_examples} objects. No markdown, no preamble.
+"""
+
+
 def cmd_run(
     only_tasks: list[str] | None = None,
     all_below: int | None = None,
     min_per_task: int = 0,
     diagnosis_file: str | None = None,
+    benchmark_log: str | None = None,
 ):
-    """Pilot-validate-refine → bulk generate for each task.
+    """Pilot-validate-refine then bulk generate for each task.
 
-    All API calls use batch API (reliable, no rate limits).
+    Modes:
+    - Standard: generates from task definitions + optional diagnosis context
+    - Adversarial (benchmark_log provided): generates from failure transcripts
 
-    For each task:
-    1. Submit small pilot batch (3 examples)
-    2. Deep validate against ground truth
-    3. If NEEDS_WORK: refine prompt, retry pilot (up to 3 attempts)
-    4. If GOOD: submit bulk batch for remaining examples
-    5. If BAD after 3 attempts: skip task
+    Self-healing pilot adapts epc and max_tokens dynamically -- no hardcoded
+    HARD_TASKS list needed.
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -719,9 +844,26 @@ def cmd_run(
         print("No tasks to generate for.")
         return
 
+    # Load diagnosis context
     diagnosis = {}
     if diagnosis_file and Path(diagnosis_file).exists():
         diagnosis = json.loads(Path(diagnosis_file).read_text())
+
+    # Load benchmark log for adversarial mode
+    adversarial_failures = {}
+    if benchmark_log:
+        log_path = Path(benchmark_log)
+        if log_path.exists():
+            log_text = log_path.read_text(errors="replace")
+            print(f"  Adversarial mode: {log_path.name}")
+            for task_id in tasks:
+                section = extract_task_section(log_text, task_id)
+                if section:
+                    failure = extract_failure_pattern(section, task_id)
+                    if failure["score"] is None or failure["score"] < 0.8:
+                        adversarial_failures[task_id] = failure
+        else:
+            print(f"  WARNING: benchmark log not found: {benchmark_log}")
 
     deficits = compute_dynamic_deficits(tasks, min_per_task=min_per_task)
     if not deficits:
@@ -741,13 +883,16 @@ def cmd_run(
     for task_id, needed in deficits.items():
         task_def = tasks[task_id]
         task_diag = diagnosis.get(task_id)
+        failure = adversarial_failures.get(task_id)
 
         print(f"\n{'─'*60}")
         print(f"  {task_id} — need {needed} examples")
         print(f"  Ground truth: {task_def.get('name', '?')}")
+        if failure:
+            print(f"  Mode: adversarial (score={failure.get('score', '?')}, patterns={failure.get('patterns', [])})")
 
         verdict, pilot_examples = _pilot_generate(
-            task_id, task_def, client, diagnosis=task_diag
+            task_id, task_def, client, diagnosis=task_diag, failure=failure
         )
         pilot_results[task_id] = {"verdict": verdict, "n_pilot": len(pilot_examples)}
 
@@ -760,7 +905,7 @@ def cmd_run(
             remaining = needed - len(pilot_examples)
             if remaining > 0:
                 bulk_tasks[task_id] = {"task_def": task_def, "needed": remaining,
-                                       "diagnosis": task_diag}
+                                       "diagnosis": task_diag, "failure": failure}
         else:
             print(f"    SKIPPING {task_id} — pilot verdict: {verdict}")
 
@@ -775,16 +920,20 @@ def cmd_run(
             task_def = info["task_def"]
             needed = info["needed"]
             task_diag = info["diagnosis"]
-            epc = _epc(task_id)
+            task_failure = info.get("failure")
+            epc = DEFAULT_EPC
             n_calls = (needed + epc - 1) // epc
-            max_tok = 16000 if task_id in HARD_TASKS else 8192
+            max_tok = DEFAULT_MAX_TOK
 
             for i in range(n_calls):
                 variation = VARIATION_CONFIGS[i % len(VARIATION_CONFIGS)]
                 custom_id = f"dynamic__{task_id}__{variation['id']}__{i:03d}"
-                prompt = build_dynamic_meta_prompt(
-                    task_id, task_def, variation, epc, diagnosis=task_diag
-                )
+                if task_failure:
+                    prompt = build_adversarial_prompt(task_id, task_def, task_failure, epc)
+                else:
+                    prompt = build_dynamic_meta_prompt(
+                        task_id, task_def, variation, epc, diagnosis=task_diag
+                    )
                 requests.append({
                     "custom_id": custom_id,
                     "params": {
@@ -847,6 +996,8 @@ def main():
                        help="Minimum new examples per task (overrides deficit)")
     run_p.add_argument("--diagnosis-file", type=str, default=None,
                        help="JSON file with per-task diagnosis from eval analysis")
+    run_p.add_argument("--benchmark-log", type=str, default=None,
+                       help="Benchmark log file for adversarial generation (failure-aware)")
 
     # count
     count_p = sub.add_parser("count", help="Show current counts vs target")
@@ -874,9 +1025,12 @@ def main():
     min_per_task = getattr(args, "min_per_task", 0)
     diagnosis_file = getattr(args, "diagnosis_file", None)
 
+    benchmark_log = getattr(args, "benchmark_log", None)
+
     if args.command == "run":
         cmd_run(only_tasks=only_tasks, all_below=all_below,
-                min_per_task=min_per_task, diagnosis_file=diagnosis_file)
+                min_per_task=min_per_task, diagnosis_file=diagnosis_file,
+                benchmark_log=benchmark_log)
     elif args.command == "count":
         cmd_count(only_tasks=only_tasks, all_below=all_below)
     elif args.command == "submit":

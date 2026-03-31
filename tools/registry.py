@@ -6,7 +6,7 @@ execution to the appropriate implementation module.
 """
 
 from .data_tools import (
-    inspect_data, check_diversity, generate_data, generate_adversarial,
+    inspect_data, check_diversity, generate_data,
     score_data, filter_data, repair_data,
     dedup_data, rebalance_data, snapshot, push_hf,
     validate_data, restore_gold_data, compare_data,
@@ -88,8 +88,9 @@ TOOL_SCHEMAS = [
     {
         "name": "generate_data",
         "description": (
-            "Generate targeted training data for specified tasks with pilot-validate-refine flow. "
-            "Auto-uses diagnosis from last diagnose call. Self-heals truncation issues."
+            "Generate training data with pilot-validate-refine flow. Auto-uses diagnosis context. "
+            "Auto-detects benchmark log for adversarial mode (failure-aware generation). "
+            "Self-heals truncation by adapting examples-per-call and token budget."
         ),
         "input_schema": {
             "type": "object",
@@ -102,33 +103,6 @@ TOOL_SCHEMAS = [
                 "min_per_task": {
                     "type": "integer",
                     "description": "Minimum examples to generate per task.",
-                    "default": 10,
-                },
-                "diagnosis_file": {
-                    "type": "string",
-                    "description": "Path to diagnosis JSON file for context-aware generation. Optional.",
-                },
-            },
-            "required": ["tasks"],
-        },
-    },
-    {
-        "name": "generate_adversarial",
-        "description": (
-            "Generate adversarial training examples derived from benchmark "
-            "failure transcripts. Best for score-0 tasks and recurring failure patterns."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "tasks": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "List of task IDs to generate adversarial data for.",
-                },
-                "n_per_task": {
-                    "type": "integer",
-                    "description": "Number of adversarial examples per task.",
                     "default": 10,
                 },
             },
@@ -508,7 +482,6 @@ _DISPATCH = {
     "diagnose":             diagnose,
     "plan_strategy":        plan_strategy,
     "generate_data":        generate_data,
-    "generate_adversarial": generate_adversarial,
     "score_data":           score_data,
     "filter_data":          filter_data,
     "repair_data":          repair_data,

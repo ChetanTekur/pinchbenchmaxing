@@ -225,6 +225,7 @@ def generate_data(args: dict, cfg, state) -> dict:
         tasks = args.get("tasks", [])
         min_per_task = args.get("min_per_task", 10)
         diagnosis_file = args.get("diagnosis_file")
+        benchmark_log = args.get("benchmark_log")
 
         # Auto-use current_diagnosis.json if diagnose was run and no explicit file given
         if not diagnosis_file:
@@ -232,6 +233,17 @@ def generate_data(args: dict, cfg, state) -> dict:
             if auto_diag.exists():
                 diagnosis_file = str(auto_diag)
                 log_print(f"  [generate_data] Using diagnosis from {auto_diag}")
+
+        # Auto-detect benchmark log from current model if not provided
+        if not benchmark_log:
+            model_name = state.current_ollama_model or ""
+            if model_name:
+                log_dir = cfg.data_dir.parent / "logs"
+                clean_name = model_name.replace("/", "_")
+                candidate = log_dir / f"bench_{clean_name}.log"
+                if candidate.exists():
+                    benchmark_log = str(candidate)
+                    log_print(f"  [generate_data] Using benchmark log: {candidate.name}")
 
         if not tasks:
             return {"status": "error", "error": "No tasks specified"}
@@ -305,6 +317,8 @@ def generate_data(args: dict, cfg, state) -> dict:
         ]
         if diagnosis_file:
             cmd.extend(["--diagnosis-file", str(diagnosis_file)])
+        if benchmark_log:
+            cmd.extend(["--benchmark-log", str(benchmark_log)])
 
         rc, output = _run_script(cmd, "generate")
 
@@ -332,101 +346,6 @@ def generate_data(args: dict, cfg, state) -> dict:
                 "per_task": generated,
             },
             "cost_usd": total_generated * 0.04,
-        }
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-
-# ── generate_adversarial ─────────────────────────────────────────────────────
-
-def generate_adversarial(args: dict, cfg, state) -> dict:
-    """Generate adversarial training examples from benchmark failure transcripts."""
-    try:
-        tasks = args.get("tasks", [])
-        n_per_task = args.get("n_per_task", 10)
-
-        if not tasks:
-            return {"status": "error", "error": "No tasks specified"}
-
-        # Smart guard: use data analyzer
-        if isinstance(tasks, str):
-            tasks = [t.strip() for t in tasks.split(",") if t.strip()]
-        tasks = [t for t in tasks if t.startswith("task_")]
-
-        try:
-            from datagen.data_analyzer import get_task_recommendation, MAX_ADD_PER_CYCLE
-            skip = []
-            for t in tasks:
-                rec = get_task_recommendation(t, cfg, state.to_dict())
-                if rec in ("LEAVE_ALONE", "INFRASTRUCTURE"):
-                    skip.append((t, rec))
-            if skip:
-                for t, rec in skip:
-                    log_print(f"  [generate_adversarial] SKIPPING {t}: analyzer says {rec}")
-                tasks = [t for t in tasks if t not in skip]
-            if not tasks:
-                return {"status": "success", "result": {"generated": 0, "note": "Analyzer: no tasks need adversarial"}, "cost_usd": 0}
-
-            # Per-cycle cap
-            baseline = getattr(state, "baseline_task_counts", {}) or {}
-            if baseline:
-                from collections import Counter as _Ctr
-                current = _Ctr()
-                if cfg.train_file.exists():
-                    for _line in cfg.train_file.read_text().splitlines():
-                        if _line.strip():
-                            try:
-                                current[json.loads(_line).get("task_id", "")] += 1
-                            except json.JSONDecodeError:
-                                pass
-                capped = []
-                for t in tasks:
-                    added = current.get(t, 0) - baseline.get(t, 0)
-                    if added >= MAX_ADD_PER_CYCLE:
-                        capped.append(t)
-                        log_print(f"  [generate_adversarial] CAPPED {t}: already +{added} this session (max {MAX_ADD_PER_CYCLE})")
-                tasks = [t for t in tasks if t not in capped]
-                if not tasks:
-                    return {"status": "success", "result": {"generated": 0, "note": f"All tasks hit +{MAX_ADD_PER_CYCLE} cap"}, "cost_usd": 0}
-        except Exception as e:
-            log_print(f"  [generate_adversarial] Analyzer failed ({e}), proceeding without guard")
-
-        script = str(_PROJECT_ROOT / "datagen" / "adversarial_gen.py")
-        log_dir = cfg.data_dir.parent / "logs"
-        generated = {}
-        total = 0
-
-        # Find the log file matching the current model (not just the latest)
-        model_name = state.current_ollama_model or ""
-        specific_log = None
-        if model_name:
-            # Convert "ollama/qwen35-9b-clawd-v21" → "bench_ollama_qwen35-9b-clawd-v21.log"
-            clean_name = model_name.replace("/", "_")
-            candidate = log_dir / f"bench_{clean_name}.log"
-            if candidate.exists():
-                specific_log = str(candidate)
-
-        for task in tasks:
-            cmd = [
-                sys.executable, script, "run",
-                "--log-dir", str(log_dir),
-                "--tasks", task,
-                "--n-per-task", str(n_per_task),
-            ]
-            if specific_log:
-                cmd.extend(["--log-file", specific_log])
-            rc, output = _run_script(cmd, f"adversarial:{task}")
-            generated[task] = {"returncode": rc}
-            if rc == 0:
-                total += n_per_task
-
-        return {
-            "status": "success",
-            "result": {
-                "generated": total,
-                "per_task": generated,
-            },
-            "cost_usd": total * 0.05,  # adversarial is slightly more expensive
         }
     except Exception as e:
         return {"status": "error", "error": str(e)}
