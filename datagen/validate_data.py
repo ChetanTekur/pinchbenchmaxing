@@ -250,7 +250,7 @@ def validate_example(example: dict, verbose: bool = False) -> list[dict]:
     required = REQUIRED_TOOLS.get(task_id, [])
     for req_tool in required:
         if req_tool not in tool_names_used:
-            issues.append({"severity": "medium", "check": "missing_required_tool",
+            issues.append({"severity": "high", "check": "missing_required_tool",
                            "detail": f"Task requires '{req_tool}' but it was never called"})
 
     # ── Repetition check ───────────────────────────────────────────────────
