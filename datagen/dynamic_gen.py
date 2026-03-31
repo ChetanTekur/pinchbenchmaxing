@@ -502,25 +502,26 @@ def cmd_collect():
 
 def _pilot_batch(task_id: str, task_def: dict, client, prompt: str,
                   max_tok: int | None = None) -> tuple[list, dict]:
-    """Submit a small pilot batch (1 request), wait, return (parsed_examples, metadata).
+    """Call the direct Messages API for pilot generation. Returns (parsed_examples, metadata).
 
-    metadata includes: stop_reason, was_truncated, max_tokens_used, prompt_tokens
+    Uses the synchronous Messages API (not batch) for reliability. The batch API
+    has shown repeated 500 errors on single-request batches.
     """
     if max_tok is None:
         max_tok = DEFAULT_MAX_TOK
-    custom_id = f"pilot__{task_id}__attempt"
 
-    # Retry on transient API errors (500, 529, etc.)
+    meta = {"stop_reason": None, "was_truncated": False, "max_tokens_used": max_tok,
+            "input_tokens": 0, "output_tokens": 0}
+
+    # Retry on transient API errors
+    resp = None
     for attempt in range(3):
         try:
-            batch = client.messages.batches.create(requests=[{
-                "custom_id": custom_id,
-                "params": {
-                    "model": MODEL,
-                    "max_tokens": max_tok,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-            }])
+            resp = client.messages.create(
+                model=MODEL,
+                max_tokens=max_tok,
+                messages=[{"role": "user", "content": prompt}],
+            )
             break
         except Exception as e:
             if attempt < 2:
@@ -528,39 +529,26 @@ def _pilot_batch(task_id: str, task_def: dict, client, prompt: str,
                 time.sleep(10 * (attempt + 1))
             else:
                 print(f"    API error (attempt 3/3): {e}")
-                meta = {"stop_reason": None, "was_truncated": False, "max_tokens_used": max_tok,
-                        "input_tokens": 0, "output_tokens": 0}
                 return [], meta
 
-    # Poll until done
-    while True:
-        status = client.messages.batches.retrieve(batch.id)
-        if status.processing_status == "ended":
-            break
-        time.sleep(30)
+    if resp is None:
+        return [], meta
 
-    # Collect result
+    meta["stop_reason"] = resp.stop_reason
+    meta["was_truncated"] = resp.stop_reason == "max_tokens"
+    if hasattr(resp, "usage"):
+        meta["input_tokens"] = getattr(resp.usage, "input_tokens", 0)
+        meta["output_tokens"] = getattr(resp.usage, "output_tokens", 0)
+
+    raw_text = resp.content[0].text if resp.content else ""
     parsed = []
-    meta = {"stop_reason": None, "was_truncated": False, "max_tokens_used": max_tok,
-            "input_tokens": 0, "output_tokens": 0}
-    for result in client.messages.batches.results(batch.id):
-        if result.result.type == "errored":
-            print(f"    Pilot batch errored")
-            return [], meta
-        msg = result.result.message
-        meta["stop_reason"] = msg.stop_reason
-        meta["was_truncated"] = msg.stop_reason == "max_tokens"
-        if hasattr(msg, "usage"):
-            meta["input_tokens"] = getattr(msg.usage, "input_tokens", 0)
-            meta["output_tokens"] = getattr(msg.usage, "output_tokens", 0)
-        raw_text = msg.content[0].text if msg.content else ""
-        examples = extract_json_array(raw_text)
-        if examples:
-            for ex in examples:
-                p = parse_example(ex, task_id)
-                if p:
-                    p["source"] = "dynamic_pilot"
-                    parsed.append(p)
+    examples = extract_json_array(raw_text)
+    if examples:
+        for ex in examples:
+            p = parse_example(ex, task_id)
+            if p:
+                p["source"] = "dynamic_pilot"
+                parsed.append(p)
     return parsed, meta
 
 
