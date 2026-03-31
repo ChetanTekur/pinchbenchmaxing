@@ -84,6 +84,50 @@ def _check_cuda_compatibility() -> dict:
         return {"ok": False, "error": f"GPU check failed: {e}"}
 
 
+def _cleanup_old_ollama_models(state) -> list[str]:
+    """Remove old Ollama models, keeping only the current and best-ever versions."""
+    try:
+        result = subprocess.run(
+            ["ollama", "list"], capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            return []
+
+        # Parse ollama list output: NAME  ID  SIZE  MODIFIED
+        lines = result.stdout.strip().split("\n")[1:]  # skip header
+        models = []
+        for line in lines:
+            parts = line.split()
+            if parts:
+                models.append(parts[0])  # model name (e.g. qwen35-9b-clawd-v25:latest)
+
+        # Determine which versions to keep
+        keep_versions = set()
+        if state.model_version:
+            keep_versions.add(state.model_version)
+        if state.best_version:
+            keep_versions.add(state.best_version)
+
+        removed = []
+        for model in models:
+            # Extract version number from model name (e.g. "qwen35-9b-clawd-v25:latest" -> 25)
+            m = re.search(r'-v(\d+)', model)
+            if m:
+                v = int(m.group(1))
+                if v not in keep_versions:
+                    rm_result = subprocess.run(
+                        ["ollama", "rm", model], capture_output=True, text=True, timeout=30
+                    )
+                    if rm_result.returncode == 0:
+                        removed.append(model)
+                        log_print(f"  [train] Removed old model: {model}")
+
+        return removed
+    except Exception as e:
+        log_print(f"  [train] Ollama cleanup failed: {e}")
+        return []
+
+
 def _check_data_coverage(cfg) -> dict:
     """
     HARD GATE: Refuse to train if data coverage is insufficient.
@@ -244,14 +288,21 @@ def train(args: dict, cfg, state) -> dict:
         }, indent=2))
         log_print(f"  [train]   Saved: {snap_file}")
 
-        # HARD GATE 3: check disk space
+        # HARD GATE 3: check disk space (auto-clean old Ollama models if needed)
         root_free = shutil.disk_usage("/").free / (1024**3)
         if root_free < 15:
-            return {
-                "status": "error",
-                "error": f"BLOCKED: Only {root_free:.1f} GB free on root (need ≥15). "
-                         f"Free space: rm -rf ~/.cache/huggingface/hub or symlink to network volume.",
-            }
+            log_print(f"  [train] Low disk: {root_free:.1f} GB free. Cleaning old Ollama models...")
+            cleaned = _cleanup_old_ollama_models(state)
+            root_free = shutil.disk_usage("/").free / (1024**3)
+            if cleaned:
+                log_print(f"  [train] After cleanup: {root_free:.1f} GB free")
+            if root_free < 15:
+                return {
+                    "status": "error",
+                    "error": f"BLOCKED: Only {root_free:.1f} GB free on root (need >=15). "
+                             f"Tried auto-cleaning old Ollama models but still not enough. "
+                             f"Manually free space on root partition.",
+                }
 
         # Preflight: check CUDA compatibility before spending time
         cuda_check = _check_cuda_compatibility()
