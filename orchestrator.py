@@ -104,7 +104,9 @@ def _format_result(tool_name: str, r: dict) -> str:
         return f"GGUF: {size} MB"
 
     elif tool_name == "score_data":
-        return f"scored {r.get('total_scored', '?')} examples ({r.get('new_scored', 0)} new)"
+        pruned = r.get("stale_scores_pruned", 0)
+        pruned_note = f", pruned {pruned} stale" if pruned else ""
+        return f"scored {r.get('total_scored', '?')} examples ({r.get('new_scored', 0)} new{pruned_note})"
 
     elif tool_name == "filter_data":
         return f"kept {r.get('kept', '?')}, removed {r.get('removed', '?')}"
@@ -180,6 +182,32 @@ def _recalc_baseline(cfg, state) -> None:
                     pass
     state.baseline_task_counts = dict(baseline)
     log_print(f"[ORCHESTRATOR AGENT] Baseline: {sum(baseline.values())} examples across {len(baseline)} tasks")
+
+
+def _refresh_data_summary(cfg, state) -> None:
+    """Recount per-task examples and update last_data_summary.
+    Called automatically after data-mutating tools so the turn context
+    always shows current counts without requiring inspect_data."""
+    from collections import Counter
+    from datetime import datetime
+    from agents.base import TASK_IDS
+    counts = Counter()
+    if cfg.train_file.exists():
+        for line in cfg.train_file.read_text().splitlines():
+            if line.strip():
+                try:
+                    counts[json.loads(line).get("task_id", "")] += 1
+                except json.JSONDecodeError:
+                    pass
+    missing = [t for t in TASK_IDS if counts.get(t, 0) == 0]
+    below_40 = {t: counts[t] for t in TASK_IDS if 0 < counts.get(t, 0) < 40}
+    state.last_data_summary = {
+        "total": sum(counts.values()),
+        "per_task": dict(counts),
+        "missing": missing,
+        "below_40": below_40,
+        "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -623,6 +651,15 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
             state.diagnose_count += 1
             state.diagnosis_required = False
             log_print(f"[ORCHESTRATOR AGENT] Analysis gate OFF: {tool_name} complete. Generation unlocked.")
+
+        # ── Auto-refresh data summary after mutations ─────────────────────
+        DATA_MUTATING_TOOLS = {
+            "generate_data", "generate_adversarial", "filter_data",
+            "dedup_data", "rebalance_data", "validate_data",
+            "restore_gold_data",
+        }
+        if tool_name in DATA_MUTATING_TOOLS and status == "success":
+            _refresh_data_summary(cfg, state)
 
         # ── Score regression check after benchmark ────────────────────────
         if tool_name == "benchmark" and status == "success" and state.best_avg_score > 0:

@@ -431,7 +431,7 @@ def score_data(args: dict, cfg, state) -> dict:
     """Run the LLM judge on all unscored examples."""
     try:
         # Prune stale scores before judging (prevents inflated counts)
-        _prune_stale_scores(cfg)
+        pruned = _prune_stale_scores(cfg)
 
         script = str(_PROJECT_ROOT / "datagen" / "llm_judge.py")
         rc, output = _run_script([sys.executable, script, "run"], "score_data")
@@ -458,8 +458,9 @@ def score_data(args: dict, cfg, state) -> dict:
             "result": {
                 "total_scored": total_scored,
                 "new_scored": new_scored,
+                "stale_scores_pruned": pruned,
             },
-            "cost_usd": new_scored * 0.01,  # estimate
+            "cost_usd": new_scored * 0.01,
         }
     except Exception as e:
         return {"status": "error", "error": str(e)}
@@ -482,7 +483,7 @@ def filter_data(args: dict, cfg, state) -> dict:
     """
     try:
         # Prune stale scores before filtering (ensures score keys match current data)
-        _prune_stale_scores(cfg)
+        pruned = _prune_stale_scores(cfg)
 
         min_score = args.get("min_score", cfg.data.min_judge_score)
         force = args.get("force", False)
@@ -584,7 +585,12 @@ def filter_data(args: dict, cfg, state) -> dict:
         after = len(kept_lines)
         log_print(f"  [filter_data] {before} → {after} (removed {removed_count}, protected {len(protected_tasks)} tasks)")
 
-        result = {"kept": after, "removed": removed_count}
+        result = {
+            "kept": after,
+            "removed": removed_count,
+            "stale_scores_pruned": pruned,
+            "per_task_counts": dict(kept_per_task),
+        }
 
         # Post-curation coverage check
         coverage = _post_curation_check(train_file)
