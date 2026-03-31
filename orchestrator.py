@@ -502,14 +502,18 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
             log_print(f"\n[ORCHESTRATOR AGENT] {consecutive_failures} consecutive failures. Stopping.")
             break
 
-        # Loop detection: if data generation has been called 5+ times without
-        # reaching training, we're stuck in a generate→validate loop
-        recent = state.action_history[-10:] if len(state.action_history) >= 10 else []
-        if len(recent) >= 10:
-            gen_count = sum(1 for a in recent if a["action"] == "generate_data")
+        # Loop detection: only count SUCCESSFUL generation calls (generated > 0)
+        # Failed/skipped calls are retries, not loops
+        recent = state.action_history[-15:] if len(state.action_history) >= 15 else []
+        if len(recent) >= 15:
+            successful_gens = sum(
+                1 for a in recent
+                if a["action"] == "generate_data" and a.get("status") == "success"
+                and "generated" in a.get("result_summary", "") and "0 examples" not in a.get("result_summary", "")
+            )
             train_count = sum(1 for a in recent if a["action"] == "train")
-            if gen_count >= 5 and train_count == 0:
-                log_print(f"\n[ORCHESTRATOR AGENT] LOOP DETECTED: {gen_count} generation calls in last 10 actions without training. Stopping.")
+            if successful_gens >= 8 and train_count == 0:
+                log_print(f"\n[ORCHESTRATOR AGENT] LOOP DETECTED: {successful_gens} successful generations in last 15 actions without training. Stopping.")
                 log_print(f"[ORCHESTRATOR AGENT] Fix data issues manually, then restart.")
                 break
 

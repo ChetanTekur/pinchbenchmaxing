@@ -553,17 +553,11 @@ def _pilot_batch(task_id: str, task_def: dict, client, prompt: str,
 
 
 def _pilot_generate(task_id: str, task_def: dict, client, diagnosis: dict | None = None,
-                     failure: dict | None = None, max_attempts: int = 3) -> tuple[str, list]:
-    """Generate pilot examples, validate, self-heal, retry. Returns (verdict, examples).
+                     failure: dict | None = None, max_attempts: int = 3) -> tuple[str, list, dict]:
+    """Generate pilot examples, validate, self-heal, retry.
 
-    Args:
-        failure: if provided, uses adversarial prompt (from benchmark failure transcripts)
-
-    Self-healing capabilities:
-    - Truncation: detects stop_reason=max_tokens, auto-increases max_tokens and reduces epc
-    - Semantic issues: feeds validation feedback back into prompt for next attempt
-    - Structural failures: reduces epc to 1 if JSON parsing fails
-    - After 3 failed attempts: returns BAD with diagnostic info (does NOT save bad data)
+    Returns (verdict, examples, learned_params) where learned_params contains
+    the epc and max_tok that worked, so bulk generation can reuse them.
     """
     from datagen.deep_validate import semantic_check
 
@@ -643,7 +637,7 @@ Generate improved examples that address ALL the issues above.
 
         if result.get("skipped"):
             print(f"    Semantic check skipped: {result.get('reason')}")
-            return "UNVERIFIED", parsed
+            return "UNVERIFIED", parsed, {"epc": epc, "max_tok": max_tok}
 
         verdict = result.get("verdict", "UNKNOWN")
         reasoning = result.get("reasoning", "")
@@ -657,7 +651,7 @@ Generate improved examples that address ALL the issues above.
 
         if verdict == "GOOD":
             print(f"    Pilot passed on attempt {attempt}")
-            return verdict, parsed
+            return verdict, parsed, {"epc": epc, "max_tok": max_tok}
 
         # Build refinement feedback for next attempt
         failure_log.append(f"attempt {attempt}: {verdict} -- {'; '.join(issues[:3])}")
@@ -680,7 +674,7 @@ Generate improved examples that address ALL the issues above.
     for entry in failure_log:
         print(f"      - {entry}")
 
-    return "BAD", []  # return empty -- do not save bad data
+    return "BAD", [], {"epc": epc, "max_tok": max_tok}  # return empty -- do not save bad data
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -892,7 +886,7 @@ def cmd_run(
         if failure:
             print(f"  Mode: adversarial (score={failure.get('score', '?')}, patterns={failure.get('patterns', [])})")
 
-        verdict, pilot_examples = _pilot_generate(
+        verdict, pilot_examples, learned = _pilot_generate(
             task_id, task_def, client, diagnosis=task_diag, failure=failure
         )
         pilot_results[task_id] = {"verdict": verdict, "n_pilot": len(pilot_examples)}
@@ -906,7 +900,9 @@ def cmd_run(
             remaining = needed - len(pilot_examples)
             if remaining > 0:
                 bulk_tasks[task_id] = {"task_def": task_def, "needed": remaining,
-                                       "diagnosis": task_diag, "failure": failure}
+                                       "diagnosis": task_diag, "failure": failure,
+                                       "learned_epc": learned.get("epc", DEFAULT_EPC),
+                                       "learned_max_tok": learned.get("max_tok", DEFAULT_MAX_TOK)}
         else:
             print(f"    SKIPPING {task_id} — pilot verdict: {verdict}")
 
@@ -922,9 +918,10 @@ def cmd_run(
             needed = info["needed"]
             task_diag = info["diagnosis"]
             task_failure = info.get("failure")
-            epc = DEFAULT_EPC
+            # Use pilot's learned parameters -- avoids truncation in bulk
+            epc = info.get("learned_epc", DEFAULT_EPC)
+            max_tok = info.get("learned_max_tok", DEFAULT_MAX_TOK)
             n_calls = (needed + epc - 1) // epc
-            max_tok = DEFAULT_MAX_TOK
 
             for i in range(n_calls):
                 variation = VARIATION_CONFIGS[i % len(VARIATION_CONFIGS)]
