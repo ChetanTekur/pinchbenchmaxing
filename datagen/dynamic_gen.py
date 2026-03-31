@@ -32,7 +32,7 @@ import anthropic
 from utils.config import load_config
 from utils.prompts import OPENCLAW_SYSTEM, VALID_TOOLS
 from datagen.task_loader import load_tasks, load_task
-from datagen.utils import (
+from datagen.gen_utils import (
     VARIATION_CONFIGS,
     parse_example, extract_json_array,
     count_existing,
