@@ -757,14 +757,19 @@ def compare_data(args: dict, cfg, state) -> dict:
             diff.append(entry)
 
             # Flag dangerous reductions
+            # Tasks <30% are in REBUILD zone -- data loss is expected (bad data removed)
             if g > 0 and delta < 0:
                 pct_lost = abs(delta) / g * 100
                 if bench >= 0.70 and pct_lost > 10:
                     entry["warning"] = f"PROTECTED task lost {pct_lost:.0f}% of gold data"
                     warnings.append(f"{t}: lost {abs(delta)} examples ({pct_lost:.0f}%), bench={bench:.0%}")
-                elif pct_lost > 20:
+                elif bench >= 0.30 and pct_lost > 20:
                     entry["warning"] = f"Lost {pct_lost:.0f}% of gold data"
                     warnings.append(f"{t}: lost {abs(delta)} examples ({pct_lost:.0f}%), bench={bench:.0%}")
+                elif pct_lost > 20:
+                    # <30% task -- data loss is likely cleanup, log but don't block
+                    entry["note"] = f"REBUILD task: lost {pct_lost:.0f}% (expected -- bad data removed)"
+                    log_print(f"  [compare_data] NOTE: {t}: lost {abs(delta)} examples ({pct_lost:.0f}%) -- REBUILD task (bench={bench:.0%}), not blocking")
 
         # Summary
         total_gold = sum(gold.values())

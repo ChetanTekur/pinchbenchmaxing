@@ -947,7 +947,7 @@ def cmd_run(
             batch = client.messages.batches.create(requests=requests)
             BATCH_FILE.write_text(batch.id)
 
-            total_est = sum(_epc(r["custom_id"].split("__")[1]) for r in requests)
+            total_est = sum(DEFAULT_EPC for r in requests)
             print(f"  Submitted {len(requests)} requests → ~{total_est} examples")
             print(f"  Batch ID: {batch.id}")
 
