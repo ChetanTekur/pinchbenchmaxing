@@ -226,6 +226,13 @@ def generate_data(args: dict, cfg, state) -> dict:
         min_per_task = args.get("min_per_task", 10)
         diagnosis_file = args.get("diagnosis_file")
 
+        # Auto-use current_diagnosis.json if diagnose was run and no explicit file given
+        if not diagnosis_file:
+            auto_diag = cfg.data_dir / "current_diagnosis.json"
+            if auto_diag.exists():
+                diagnosis_file = str(auto_diag)
+                log_print(f"  [generate_data] Using diagnosis from {auto_diag}")
+
         if not tasks:
             return {"status": "error", "error": "No tasks specified"}
 

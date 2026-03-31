@@ -23,6 +23,43 @@ from agents.base import log_print, _write_log
 _PROJECT_ROOT = Path(__file__).parent.parent
 
 
+def _build_per_task_diagnosis(diagnosis: dict) -> dict:
+    """Convert diagnose output to per-task format that dynamic_gen.py expects.
+
+    diagnose returns: {root_causes: [{cause, fix, affected_tasks}], data_fixes: [{task, action, reason}]}
+    dynamic_gen expects: {task_id: {root_cause, fix, reason}}
+    """
+    per_task = {}
+
+    # Extract from root_causes (has the actual diagnosis + fix)
+    for rc in diagnosis.get("root_causes", []):
+        fix = rc.get("fix", "")
+        cause = rc.get("cause", "")
+        for task_id in rc.get("affected_tasks", []):
+            if task_id not in per_task:
+                per_task[task_id] = {"root_cause": cause, "fix": fix, "reason": ""}
+            else:
+                # Append if multiple root causes affect same task
+                per_task[task_id]["root_cause"] += f"; {cause}"
+                if fix:
+                    per_task[task_id]["fix"] += f"; {fix}"
+
+    # Enrich with data_fixes (has the action + reason)
+    for df in diagnosis.get("data_fixes", []):
+        task_id = df.get("task", "")
+        if task_id in per_task:
+            per_task[task_id]["reason"] = df.get("reason", "")
+            per_task[task_id]["action"] = df.get("action", "")
+        elif task_id:
+            per_task[task_id] = {
+                "root_cause": df.get("reason", ""),
+                "fix": f"Action: {df.get('action', 'regenerate')}",
+                "reason": df.get("reason", ""),
+            }
+
+    return per_task
+
+
 # ── JSON extraction (robust, from eval_analysis_agent.py) ────────────────────
 
 def _extract_json_object(text: str) -> dict | None:
@@ -398,6 +435,13 @@ def diagnose(args: dict, cfg, state) -> dict:
 
         log_print(f"  [diagnose] Summary: {diagnosis.get('summary', '')[:100]}")
         log_print(f"  [diagnose] Root causes: {len(diagnosis.get('root_causes', []))}")
+
+        # Save per-task diagnosis file for generate_data to consume automatically
+        per_task_diag = _build_per_task_diagnosis(diagnosis)
+        if per_task_diag:
+            diag_file = cfg.data_dir / "current_diagnosis.json"
+            diag_file.write_text(json.dumps(per_task_diag, indent=2))
+            log_print(f"  [diagnose] Saved per-task diagnosis for {len(per_task_diag)} tasks -> {diag_file}")
 
         return {
             "status": "success",
