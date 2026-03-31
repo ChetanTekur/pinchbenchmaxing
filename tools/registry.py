@@ -10,6 +10,7 @@ from .data_tools import (
     score_data, filter_data, repair_data,
     dedup_data, rebalance_data, snapshot, push_hf,
     validate_data, restore_gold_data, compare_data,
+    read_benchmark_transcript,
 )
 from .training_tools import (
     train, convert, register, validate_model, benchmark, check_disk,
@@ -385,6 +386,30 @@ TOOL_SCHEMAS = [
         },
     },
     {
+        "name": "read_benchmark_transcript",
+        "description": (
+            "Read the RAW benchmark transcript for specific tasks. Returns the actual "
+            "model output — what it typed, what tools it called, what errors it got. "
+            "This is the most diagnostic signal for understanding WHY a task fails. "
+            "Use this instead of or in addition to diagnose for deeper analysis."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Task IDs to read transcripts for.",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Max characters per task transcript (default 3000).",
+                },
+            },
+            "required": ["tasks"],
+        },
+    },
+    {
         "name": "restore_gold_data",
         "description": (
             "Restore training data from the best-scoring version. "
@@ -489,6 +514,7 @@ _DISPATCH = {
     "validate_data":        validate_data,
     "snapshot":             snapshot,
     "compare_data":         compare_data,
+    "read_benchmark_transcript": read_benchmark_transcript,
     "restore_gold_data":    restore_gold_data,
     "benchmark":            benchmark,
     "train":                train,

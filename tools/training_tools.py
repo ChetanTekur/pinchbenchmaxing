@@ -487,6 +487,34 @@ def benchmark(args: dict, cfg, state) -> dict:
             state.weak_tasks = [t for t in TASK_IDS if t in scores
                                 and scores[t] < 0.5]  # threshold from config ideally
 
+        # Save per-version artifacts for cross-version comparison
+        if scores:
+            version = state.model_version
+            versions_dir = cfg.data_dir.parent / "versions" / f"v{version}"
+            versions_dir.mkdir(parents=True, exist_ok=True)
+            # Save scores
+            (versions_dir / "scores.json").write_text(json.dumps({
+                "version": version,
+                "model": model_name,
+                "avg_score": avg_score,
+                "scores": scores,
+            }, indent=2))
+            # Symlink benchmark log
+            log_link = versions_dir / "benchmark.log"
+            try:
+                if log_link.is_symlink() or log_link.exists():
+                    log_link.unlink()
+                if log_path.exists():
+                    log_link.symlink_to(log_path)
+            except OSError:
+                pass
+            # Copy data snapshot if it exists
+            snap = cfg.data_dir / f"data_snapshot_v{version}.json"
+            if snap.exists():
+                import shutil
+                shutil.copy2(str(snap), str(versions_dir / "data_snapshot.json"))
+            log_print(f"  [benchmark] Artifacts saved to {versions_dir}")
+
         return {
             "status": "success" if scores else "error",
             "result": {

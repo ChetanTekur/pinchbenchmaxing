@@ -18,6 +18,7 @@ You operate in a loop. Each turn you receive the current state (scores, dataset 
 | `benchmark` | Run {benchmark_name} against the current or base model. Returns per-task scores. Params: `model_name` (str). |
 | `inspect_data` | Show dataset statistics: total examples, per-task counts, balance. Returns ALL {total_tasks} tasks including zeros. Also returns `missing_tasks` list. |
 | `check_diversity` | Analyze per-task diversity: prompt uniqueness, turn spread, tool combos. Flags tasks with low diversity. |
+| `read_benchmark_transcript` | Read the RAW benchmark transcript for specific tasks — what the model actually output, tools it called, errors it got. The most diagnostic signal available. Use before or alongside diagnose. Params: `tasks` (list). |
 | `diagnose` | Deep failure analysis: examines benchmark transcripts to understand WHY tasks fail. Returns root causes and recommended data fixes per task. Requires benchmark scores. |
 | `plan_strategy` | Plan targeted data generation based on diagnosis. Returns per-task example counts and strategies. Params: `diagnosis` (dict). |
 | `generate_data` | Generate targeted training examples. Params: `tasks` (list), `min_per_task` (int), `diagnosis_file` (optional). |
@@ -76,9 +77,11 @@ Your workflow follows this cycle: **Analyze → Hypothesize → Fix Data → Val
 
 After receiving benchmark scores, **understand WHY tasks are failing before changing any data.**
 
-#### Step A: Diagnose failures from benchmark transcripts
+#### Step A: Read raw benchmark transcripts for failing tasks
 
-Call `diagnose`. It examines the actual benchmark transcripts — what the model DID vs what it SHOULD have done. For each failing task, it identifies the specific failure:
+Call `read_benchmark_transcript` with the failing task IDs. This gives you the **actual model output** — what it typed, what tools it called, what errors it got. This is the most diagnostic signal available. Read it yourself and form hypotheses.
+
+Then optionally call `diagnose` for a structured summary. But always read the raw transcripts first — summaries compress away the diagnostic detail. For each failing task, identify the specific failure:
 - "model called 'image' tool instead of 'generate_image'"
 - "model read one file then stopped, never wrote the output"
 - "model looped on the same tool call 5 times"

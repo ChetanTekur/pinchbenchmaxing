@@ -862,6 +862,87 @@ def compare_data(args: dict, cfg, state) -> dict:
         return {"status": "error", "error": str(e)}
 
 
+# ── read_benchmark_transcript ────────────────────────────────────────────────
+
+def read_benchmark_transcript(args: dict, cfg, state) -> dict:
+    """Read the raw benchmark transcript for specific tasks.
+
+    Returns the actual model output — what it typed, what tools it called,
+    what errors it got. This is the most diagnostic signal for understanding
+    WHY a task fails. Much more useful than summarized diagnoses.
+
+    Params:
+      tasks: list of task IDs to read transcripts for
+      version: model version (default: current). Used to find the right log file.
+      max_chars: max characters per task transcript (default: 3000)
+    """
+    try:
+        tasks = args.get("tasks", [])
+        if isinstance(tasks, str):
+            tasks = [t.strip() for t in tasks.split(",") if t.strip()]
+        if not tasks:
+            return {"status": "error", "error": "No tasks specified"}
+
+        max_chars = args.get("max_chars", 3000)
+        version = args.get("version", state.model_version)
+
+        # Find the benchmark log file
+        log_dir = cfg.data_dir.parent / "logs"
+        model_name = state.current_ollama_model or ""
+
+        # Try version-specific log first
+        log_file = None
+        if model_name:
+            clean_name = model_name.replace("/", "_")
+            candidate = log_dir / f"bench_{clean_name}.log"
+            if candidate.exists():
+                log_file = candidate
+
+        # Fall back to latest log
+        if not log_file:
+            logs = sorted(log_dir.glob("bench_*.log"),
+                          key=lambda p: p.stat().st_mtime, reverse=True)
+            if logs:
+                log_file = logs[0]
+
+        if not log_file:
+            return {"status": "error", "error": "No benchmark log found"}
+
+        log_text = log_file.read_text(errors="replace")
+        log_print(f"  [read_transcript] Reading from {log_file.name}")
+
+        import re
+        transcripts = {}
+        for task_id in tasks:
+            # Extract section between "starting task: {task}" and next "starting task:"
+            pattern = rf'starting task: .*?{re.escape(task_id)}.*?(?=starting task:|$)'
+            m = re.search(pattern, log_text, re.DOTALL)
+            if m:
+                raw = m.group()
+                # Truncate if too long but keep the ending (score + notes)
+                if len(raw) > max_chars:
+                    # Keep first 1/3 and last 2/3 (the end has the score and judge notes)
+                    head = raw[:max_chars // 3]
+                    tail = raw[-(max_chars * 2 // 3):]
+                    raw = head + "\n... [truncated] ...\n" + tail
+                transcripts[task_id] = raw
+                log_print(f"  [read_transcript] {task_id}: {len(raw)} chars")
+            else:
+                transcripts[task_id] = "(not found in log)"
+                log_print(f"  [read_transcript] {task_id}: not found")
+
+        return {
+            "status": "success",
+            "result": {
+                "log_file": log_file.name,
+                "transcripts": transcripts,
+            },
+            "cost_usd": 0.0,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 # ── restore_gold_data ────────────────────────────────────────────────────────
 
 def restore_gold_data(args: dict, cfg, state) -> dict:

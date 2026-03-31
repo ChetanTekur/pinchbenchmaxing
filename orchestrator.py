@@ -142,6 +142,10 @@ def _format_result(tool_name: str, r: dict) -> str:
     elif tool_name == "snapshot":
         return f"saved to {r.get('path', '?')}"
 
+    elif tool_name == "read_benchmark_transcript":
+        transcripts = r.get("transcripts", {})
+        return f"read {len(transcripts)} task transcripts from {r.get('log_file', '?')}"
+
     elif tool_name == "compare_data":
         warnings = r.get("warnings", [])
         safe = r.get("safe_to_train", True)
