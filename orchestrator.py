@@ -647,7 +647,7 @@ def run_orchestrator(cfg, state: AgentState, state_file: Path, dry_run: bool = F
         if tool_name in ("diagnose", "read_benchmark_transcript") and status == "success":
             state.diagnose_count += 1
             state.diagnosis_required = False
-            log_print(f"[ORCHESTRATOR AGENT] Analysis gate OFF: {tool_name} complete. Generation unlocked.")
+            log_print(f"[ORCHESTRATOR AGENT] Analysis complete ({tool_name}). Generation unlocked.")
 
         # ── Auto-refresh data summary after mutations ─────────────────────
         DATA_MUTATING_TOOLS = {
