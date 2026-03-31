@@ -709,13 +709,9 @@ def main():
     args = parser.parse_args()
 
     if args.command == "run":
-        # Initialize logger (session-based: loop_v23_20260330_143000.log)
+        # Initialize logger (session-based: loop_session_20260330_143000.log)
         log_dir = cfg.data_dir.parent / "logs"
-        session_label = ""
-        if args.model:
-            m = re.search(r'v(\d+)', args.model)
-            if m:
-                session_label = f"v{m.group(1)}"
+        session_label = "session"
         setup_file_logger(log_dir, session_label=session_label)
 
         state_file = cfg.data_dir / STATE_FILE_NAME
