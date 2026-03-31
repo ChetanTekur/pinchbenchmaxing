@@ -513,9 +513,14 @@ def cmd_collect():
     return total_train + total_val
 
 
-def _pilot_batch(task_id: str, task_def: dict, client, prompt: str) -> list:
-    """Submit a small pilot batch (1 request → 3 examples), wait, return parsed examples."""
-    max_tok = 16000 if task_id in HARD_TASKS else 8192
+def _pilot_batch(task_id: str, task_def: dict, client, prompt: str,
+                  max_tok: int | None = None) -> tuple[list, dict]:
+    """Submit a small pilot batch (1 request), wait, return (parsed_examples, metadata).
+
+    metadata includes: stop_reason, was_truncated, max_tokens_used, prompt_tokens
+    """
+    if max_tok is None:
+        max_tok = 16000 if task_id in HARD_TASKS else 8192
     custom_id = f"pilot__{task_id}__attempt"
 
     batch = client.messages.batches.create(requests=[{
@@ -536,11 +541,19 @@ def _pilot_batch(task_id: str, task_def: dict, client, prompt: str) -> list:
 
     # Collect result
     parsed = []
+    meta = {"stop_reason": None, "was_truncated": False, "max_tokens_used": max_tok,
+            "input_tokens": 0, "output_tokens": 0}
     for result in client.messages.batches.results(batch.id):
         if result.result.type == "errored":
-            print(f"    ⚠ Pilot batch errored")
-            return []
-        raw_text = result.result.message.content[0].text if result.result.message.content else ""
+            print(f"    Pilot batch errored")
+            return [], meta
+        msg = result.result.message
+        meta["stop_reason"] = msg.stop_reason
+        meta["was_truncated"] = msg.stop_reason == "max_tokens"
+        if hasattr(msg, "usage"):
+            meta["input_tokens"] = getattr(msg.usage, "input_tokens", 0)
+            meta["output_tokens"] = getattr(msg.usage, "output_tokens", 0)
+        raw_text = msg.content[0].text if msg.content else ""
         examples = extract_json_array(raw_text)
         if examples:
             for ex in examples:
@@ -548,25 +561,31 @@ def _pilot_batch(task_id: str, task_def: dict, client, prompt: str) -> list:
                 if p:
                     p["source"] = "dynamic_pilot"
                     parsed.append(p)
-    return parsed
+    return parsed, meta
 
 
 def _pilot_generate(task_id: str, task_def: dict, client, diagnosis: dict | None = None,
                      max_attempts: int = 3) -> tuple[str, list]:
-    """Generate 3 pilot examples via batch API, validate, refine prompt if needed.
+    """Generate pilot examples, validate, self-heal, retry. Returns (verdict, examples).
 
-    Returns (final_verdict, validated_examples) after up to max_attempts iterations.
+    Self-healing capabilities:
+    - Truncation: detects stop_reason=max_tokens, auto-increases max_tokens and reduces epc
+    - Semantic issues: feeds validation feedback back into prompt for next attempt
+    - Structural failures: reduces epc to 1 if JSON parsing fails
+    - After 3 failed attempts: returns BAD with diagnostic info (does NOT save bad data)
     """
     from datagen.deep_validate import semantic_check
 
     variation = VARIATION_CONFIGS[0]
     epc = min(3, _epc(task_id) * 3)
+    max_tok = 16000 if task_id in HARD_TASKS else 8192
     refinement_feedback = ""
     verdict = "FAILED"
     parsed = []
+    failure_log = []  # track what went wrong for final diagnostics
 
     for attempt in range(1, max_attempts + 1):
-        print(f"\n    Pilot attempt {attempt}/{max_attempts} for {task_id}...")
+        print(f"\n    Pilot attempt {attempt}/{max_attempts} for {task_id} (epc={epc}, max_tok={max_tok})...")
 
         prompt = build_dynamic_meta_prompt(task_id, task_def, variation, epc, diagnosis=diagnosis)
         if refinement_feedback:
@@ -578,21 +597,58 @@ def _pilot_generate(task_id: str, task_def: dict, client, diagnosis: dict | None
 Generate improved examples that address ALL the issues above.
 """
 
-        parsed = _pilot_batch(task_id, task_def, client, prompt)
+        parsed, meta = _pilot_batch(task_id, task_def, client, prompt, max_tok=max_tok)
 
+        # ── Self-heal: truncation ──
+        if meta["was_truncated"]:
+            failure_log.append(f"attempt {attempt}: truncated (max_tokens={max_tok}, output={meta['output_tokens']})")
+            print(f"    Output truncated (stop_reason=max_tokens, used {meta['output_tokens']} tokens)")
+
+            if epc > 1:
+                # Try fewer examples per call first
+                epc = 1
+                print(f"    Self-heal: reduced epc to 1")
+                refinement_feedback = (
+                    "Output was truncated. Generate only 1 example. "
+                    "Keep the example complete -- do not cut off mid-response."
+                )
+                continue
+            elif max_tok < 32000:
+                # Already at epc=1, increase token budget
+                max_tok = min(max_tok * 2, 32000)
+                print(f"    Self-heal: increased max_tokens to {max_tok}")
+                refinement_feedback = (
+                    "Output was truncated even with 1 example. "
+                    "The example must be complete. Prioritize completeness over detail."
+                )
+                continue
+            else:
+                # Can't fix truncation -- max budget reached
+                failure_log.append(f"attempt {attempt}: truncation unfixable (max_tok=32000, epc=1)")
+                print(f"    Cannot fix truncation: already at epc=1 and max_tokens=32000")
+                verdict = "BAD"
+                break
+
+        # ── Self-heal: no valid examples parsed ──
         if not parsed:
-            print(f"    ⚠ No valid examples from pilot batch")
-            refinement_feedback = "No valid examples were produced. Ensure output is a valid JSON array with user_message and turns fields."
+            failure_log.append(f"attempt {attempt}: no valid examples parsed")
+            print(f"    No valid examples from pilot batch")
+            if epc > 1:
+                epc = 1
+                print(f"    Self-heal: reduced epc to 1 for simpler output")
+            refinement_feedback = (
+                "No valid examples were produced. Output must be a valid JSON array "
+                "with user_message and turns fields. Generate exactly 1 example."
+            )
             continue
 
         print(f"    Generated {len(parsed)} examples, validating...")
 
-        # Run semantic check against ground truth
+        # ── Semantic validation ──
         result = semantic_check(task_id, parsed, task_def)
 
         if result.get("skipped"):
-            print(f"    ⚠ Semantic check skipped: {result.get('reason')}")
-            # Can't validate — return what we have
+            print(f"    Semantic check skipped: {result.get('reason')}")
             return "UNVERIFIED", parsed
 
         verdict = result.get("verdict", "UNKNOWN")
@@ -606,10 +662,11 @@ Generate improved examples that address ALL the issues above.
             print(f"    Reasoning: {reasoning[:200]}")
 
         if verdict == "GOOD":
-            print(f"    ✓ Pilot passed on attempt {attempt}")
+            print(f"    Pilot passed on attempt {attempt}")
             return verdict, parsed
 
         # Build refinement feedback for next attempt
+        failure_log.append(f"attempt {attempt}: {verdict} -- {'; '.join(issues[:3])}")
         feedback_parts = []
         if issues:
             feedback_parts.append("Issues found:\n" + "\n".join(f"  - {i}" for i in issues))
@@ -623,9 +680,13 @@ Generate improved examples that address ALL the issues above.
         if attempt < max_attempts:
             print(f"    Refining prompt and retrying...")
 
-    # All attempts exhausted
-    print(f"    ⚠ Pilot did not reach GOOD after {max_attempts} attempts (last: {verdict})")
-    return verdict, parsed
+    # All attempts exhausted -- diagnose why
+    print(f"\n    PILOT FAILED for {task_id} after {max_attempts} attempts (last: {verdict})")
+    print(f"    Failure log:")
+    for entry in failure_log:
+        print(f"      - {entry}")
+
+    return "BAD", []  # return empty -- do not save bad data
 
 
 def cmd_run(
@@ -690,7 +751,7 @@ def cmd_run(
         )
         pilot_results[task_id] = {"verdict": verdict, "n_pilot": len(pilot_examples)}
 
-        if verdict in ("GOOD", "NEEDS_WORK", "UNVERIFIED"):
+        if verdict in ("GOOD", "UNVERIFIED") and pilot_examples:
             for ex in pilot_examples:
                 with open(TRAIN_FILE, "a") as f:
                     f.write(json.dumps(ex) + "\n")
@@ -701,7 +762,7 @@ def cmd_run(
                 bulk_tasks[task_id] = {"task_def": task_def, "needed": remaining,
                                        "diagnosis": task_diag}
         else:
-            print(f"    ⚠ SKIPPING bulk — pilot quality too low")
+            print(f"    SKIPPING {task_id} — pilot verdict: {verdict}")
 
     # Phase 2: Bulk generate (single batch for all passing tasks)
     if bulk_tasks:
