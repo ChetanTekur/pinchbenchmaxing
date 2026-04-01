@@ -8,7 +8,7 @@ Most ML training loops are rigid pipelines: generate data → train → eval →
 
 PinchBench Maxing replaces the pipeline with a **Claude-powered orchestrator** that *reasons* about what to do next. It sees the current state (benchmark scores, dataset stats, budget, disk space, action history) and makes a decision: should I generate more data? Rebalance the dataset first? Diagnose why email scoring dropped? Clean up disk before training?
 
-Each decision is a single Claude API call. The orchestrator has 19 tools at its disposal and a set of guardrails defined in plain markdown (`prompts/orchestrator.md`). No hardcoded stage order. No brittle `if/else` logic. The orchestrator adapts.
+Each decision is a single Claude API call. The orchestrator has 22 tools at its disposal and a set of guardrails defined in plain markdown (`prompts/orchestrator.md`). No hardcoded stage order. No brittle `if/else` logic. The orchestrator adapts.
 
 Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch): give an AI system a metric to optimize and let it drive the improvement cycle while you sleep.
 
@@ -40,8 +40,9 @@ Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch):
 | qwen35-9b-clawd-v17 | 15.8 / 23 (69%) | Balanced data, smart analyzer |
 | qwen35-9b-clawd-v19 | 12.8 / 23 (56%) | Regression — blind data generation without diagnosis |
 | qwen35-9b-clawd-v20 | 15.5 / 23 (67%) | Partial recovery |
-| **qwen35-9b-clawd-v21** | **17.8 / 23 (77%)** | **New best — adversarial fixes for 6 zero tasks** |
-| qwen35-9b-clawd-v22 | ~14 / 23 (~61%) | Regression — old orchestrator overwrote v21 gold data |
+| **qwen35-9b-clawd-v21** | **18.7 / 23 (81%)** | **Best ever -- adversarial fixes for 6 zero tasks** |
+| qwen35-9b-clawd-v22 | ~14 / 23 (~61%) | Regression -- old orchestrator overwrote v21 gold data |
+| qwen35-9b-clawd-v25 | 16.0 / 23 (70%) | Regression -- data corruption from blind generation |
 
 ### Key Lessons
 
@@ -53,9 +54,13 @@ Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch):
 
 4. **Quality over quantity.** 50 high-quality examples per task (judge score ≥4.5) outperforms 120 mixed-quality examples. The smart data analyzer uses benchmark scores + judge quality + example counts to decide when to stop generating.
 
-5. **Diagnose before generating.** The v19-v22 regression cycle proved that blind adversarial data generation destroys capabilities. The orchestrator now has a hard gate: `generate_data` and `generate_adversarial` are blocked until `diagnose` runs after each benchmark. Understanding *why* tasks fail is mandatory before changing data.
+5. **Diagnose before generating.** The v19-v22 regression cycle proved that blind data generation destroys capabilities. The orchestrator has a hard gate: `generate_data` is blocked until `diagnose` or `read_benchmark_transcript` runs after each benchmark. Understanding *why* tasks fail is mandatory before changing data.
 
-6. **Gold data must be recoverable.** v22 overwrote v21's gold dataset with worse data. The orchestrator now auto-restores the best-scoring dataset from HuggingFace on regression detection.
+6. **Gold data must be recoverable.** v22 overwrote v21's gold dataset with worse data. The orchestrator auto-restores the best-scoring dataset from HuggingFace on regression. Tasks scoring <30% are exempt from the gold integrity gate -- removing bad data from failing tasks is expected.
+
+7. **Self-healing data generation.** The pilot-validate-refine loop detects truncation (stop_reason=max_tokens), reduces examples-per-call, increases token budget, and retries. No hardcoded "hard tasks" list needed -- the system adapts dynamically. Bulk generation inherits the pilot's learned parameters.
+
+8. **Diagnosis flows into generation.** The `diagnose` tool saves per-task root causes to `current_diagnosis.json`. The `generate_data` tool auto-picks it up and injects it into the generation prompt. No manual wiring needed.
 
 Dataset: [huggingface.co/datasets/cptekur/pinchbench-clawd](https://huggingface.co/datasets/cptekur/pinchbench-clawd) (CC BY 4.0)
 
@@ -142,11 +147,14 @@ Data generation reads task definitions directly from PinchBench `.md` files (`da
 - Optional diagnosis context for targeted fixes
 
 **Pilot-validate-refine flow** (`datagen/dynamic_gen.py`):
-1. Generate 3 pilot examples via batch API
-2. Deep validate against ground truth
-3. If NEEDS_WORK: feed issues back, refine prompt, retry (up to 3 attempts)
-4. If GOOD: bulk generate remaining examples
-5. If BAD after 3 attempts: skip task and report
+1. Generate 3 pilot examples via direct Messages API (not batch -- more reliable for single requests)
+2. Deep validate against ground truth (semantic check via Claude)
+3. Self-heal on truncation: reduce epc to 1, increase max_tokens up to 32K
+4. If NEEDS_WORK: feed issues back into prompt, retry (up to 3 attempts)
+5. If GOOD: bulk generate remaining examples via batch API (inherits pilot's learned epc/max_tokens)
+6. If BAD after 3 attempts: skip task, log failure diagnostics, save nothing
+
+**Adversarial mode**: When a benchmark log is available, `generate_data` auto-parses failure transcripts and uses adversarial prompts that show what the model did wrong. Same pilot validation applies.
 
 ### Smart Data Analyzer
 
@@ -206,24 +214,29 @@ Notice how the orchestrator inspected the data *first*, saw the imbalance, and r
 | Tool | Type | What it does |
 |------|------|-------------|
 | `inspect_data` | Data | Dataset stats: counts, balance, quality |
-| `generate_data` | Data | Generate targeted training examples |
-| `generate_adversarial` | Data | Generate from benchmark failure transcripts |
+| `generate_data` | Data | Generate training data with pilot validation + self-healing. Auto-uses diagnosis and benchmark log for adversarial mode |
 | `score_data` | Data | Score all examples 1-5 via LLM judge |
 | `filter_data` | Data | Remove examples below score threshold |
 | `repair_data` | Data | Fix borderline examples (score 2-3) |
 | `dedup_data` | Data | Remove semantically similar examples |
 | `rebalance_data` | Data | Trim overweight tasks to target |
+| `validate_data` | Data | Check tool names, schemas, truncation. `fix=true` removes bad examples |
+| `compare_data` | Data | Diff current data vs gold/best version |
+| `restore_gold_data` | Data | Selective rollback to best version's data per task |
 | `snapshot` | Data | Save dataset before destructive operations |
 | `push_hf` | Data | Push to HuggingFace |
-| `diagnose` | Reasoning | Deep failure analysis with Claude |
-| `plan_strategy` | Reasoning | Data generation planning with Claude |
+| `read_benchmark_transcript` | Analysis | Read raw model output for specific tasks (primary diagnostic tool) |
+| `diagnose` | Analysis | Structured failure analysis with Claude. Auto-saves diagnosis for generation |
+| `plan_strategy` | Analysis | Data generation planning with Claude |
 | `benchmark` | Eval | Run PinchBench (23 tasks) |
 | `check_disk` | Eval | Check free disk space |
+| `check_diversity` | Eval | Analyze per-task data diversity |
 | `validate_model` | Training | Verify base model on HuggingFace |
-| `train` | Training | Fine-tune with Unsloth LoRA |
+| `train` | Training | Fine-tune with Unsloth LoRA. Auto-cleans old Ollama models on low disk |
 | `convert` | Training | Merge + quantize to GGUF |
 | `register` | Training | Register GGUF in Ollama |
 | `get_state` | Control | Return full state |
+| `write_note` | Control | Save notes that persist across session restarts |
 | `request_approval` | Control | Pause for human input |
 
 ### Guardrails
@@ -232,16 +245,17 @@ The orchestrator has hard-coded safety mechanisms:
 
 **Auto-stops:**
 - Budget drops below $5
-- Score regresses >10% from best ever
 - Dataset drops below 500 examples
 - A tool fails 3 times consecutively
-- Generation loop detected (5+ generate calls without training)
+- Generation loop detected (8+ successful generations in 15 actions without training)
 
 **Hard gates:**
-- **Diagnose gate** — `generate_data` and `generate_adversarial` are blocked after benchmark until `diagnose` runs at least once. Prevents blind data generation. Capped at 2 diagnose calls per cycle to avoid analysis paralysis.
-- **Gold restore** — on regression (model_version > best_version), auto-downloads the best-scoring dataset from HuggingFace and restores it before starting. Checks local cache (`data/gold_v{N}/`) first.
+- **Diagnosis gate** -- `generate_data` is blocked after benchmark until `diagnose` or `read_benchmark_transcript` runs. Prevents blind data generation.
+- **Gold integrity** -- `train` is blocked if any task scoring >=30% lost >20% of gold data. Tasks scoring <30% are exempt (data removal is expected for failing tasks).
+- **Data quality** -- `train` requires >=90% clean examples. `missing_required_tool` is high severity and auto-removed by `validate_data fix=true`.
+- **Disk space** -- `train` auto-cleans old Ollama models when root disk <15GB. Each model is ~5.6GB.
 
-All prompts are in `prompts/*.md` as templates — editable without touching code. Variables come from `config.yaml`.
+All prompts are in `prompts/*.md` as templates -- editable without touching code. Variables come from `config.yaml`.
 
 ---
 
@@ -290,9 +304,10 @@ python3 orchestrator.py run --model qwen35-9b-clawd-v7 \
 python3 orchestrator.py run --model qwen35-9b-clawd-v7 --dry-run
 ```
 
-**Legacy fixed pipeline (fallback):**
+**Fresh start (clear stale state):**
 ```bash
-python3 loop.py run --model qwen35-9b-clawd-v7 --mode pipeline
+python3 orchestrator.py run --model qwen35-9b-clawd-v25 \
+  --log $PBM_WORKSPACE/logs/bench_ollama_qwen35-9b-clawd-v25.log --fresh
 ```
 
 **Check status:**
@@ -389,29 +404,23 @@ huggingface:
 
 ```
 orchestrator.py              # Claude-powered orchestrator (main entry point)
-loop.py                      # --mode agentic (default) | pipeline (fallback)
 config.yaml                  # all settings
 LICENSE                      # MIT (code), CC BY 4.0 (dataset)
 
 prompts/                     # agent prompts as markdown templates
-  orchestrator.md            # orchestrator system prompt
+  orchestrator.md            # orchestrator system prompt (decision framework, scenarios)
   diagnose.md                # failure analysis reasoning
   plan_strategy.md           # data generation planning
 
-tools/                       # tool implementations
-  registry.py                # 19 tool schemas + dispatch
+tools/                       # tool implementations (22 tools)
+  registry.py                # tool schemas + dispatch
   data_tools.py              # inspect, generate, score, filter, repair, dedup, rebalance, snapshot
-  training_tools.py          # validate, train, convert, register, benchmark, check_disk
+  training_tools.py          # train, convert, register, benchmark, check_disk
   reasoning_tools.py         # diagnose, plan_strategy (Claude-calls-Claude)
-  eval_tools.py              # get_state, request_approval
+  eval_tools.py              # get_state, request_approval, write_note
 
-agents/                      # pipeline agents (used by --mode pipeline)
-  base.py                    # AgentState, Agent base class, file logger
-  eval_agent.py              # benchmarks model, parses scores
-  eval_analysis_agent.py     # probes model versions, diagnoses regressions
-  data_agent.py              # score-proportional generation
-  curator_agent.py           # score → repair → filter → dedup → rebalance → HF push
-  trainer_agent.py           # prepare → finetune → convert → register
+agents/                      # shared state and utilities
+  base.py                    # AgentState, TASK_IDS, file logger
 
 stages/                      # training pipeline stages
   prepare.py                 # convert to SFT format
@@ -420,37 +429,32 @@ stages/                      # training pipeline stages
   validate_model.py          # check HF existence, architecture, Unsloth support
   probe.py                   # interactive model testing
 
-datagen/                     # data generation and curation scripts
-  dynamic_gen.py             # dynamic generation from PinchBench .md files (primary)
+datagen/                     # data generation and curation
+  dynamic_gen.py             # generation + adversarial mode + pilot validation + self-healing
+  gen_utils.py               # shared utilities (parse_example, extract_json_array, VARIATION_CONFIGS)
   task_loader.py             # loads task definitions from benchmark .md files
   deep_validate.py           # 3-level validation: structural + statistical + semantic (Claude)
   validate_data.py           # structural validation (tool names, args, schemas)
-  generate.py                # initial data via Claude Batch API (legacy)
-  topup.py                   # task definitions + variation configs
-  targeted_topup.py          # diagnosis-aware topup (legacy — use dynamic_gen)
-  adversarial_gen.py         # generate from benchmark failure transcripts
+  data_analyzer.py           # smart recommendations per task (LEAVE_ALONE, GENERATE, etc.)
+  topup.py                   # task definitions + variation configs (standalone)
   llm_judge.py               # score examples 1-5 with Claude
   example_repair.py          # repair borderline examples
   dedup.py                   # semantic deduplication
   rebalance.py               # trim overweight tasks
-  inspect_data.py            # dataset stats, diversity analysis, validation
+  inspect_data.py            # dataset stats, diversity analysis
 
 scripts/                     # shell scripts
   startup.sh                 # every-session: start Ollama + OpenClaw
   benchmark_run.sh           # run PinchBench
   register_model.sh          # register GGUF in Ollama
   push_to_hf.sh              # push dataset to HuggingFace
+  diff_snapshot.py           # compare snapshot vs current data
   set_env.sh                 # API key template
   check_setup.sh             # pre-benchmark checker
-  train_and_eval.sh          # manual pipeline
-  test_tool_call.sh          # verify tool calling works
 
 utils/                       # shared utilities
   config.py                  # loads config.yaml, computes derived paths
   prompts.py                 # shared constants: OPENCLAW_SYSTEM, VALID_TOOLS
-
-docs/                        # documentation
-  architecture.md            # system design
 ```
 
 ---
@@ -461,17 +465,15 @@ docs/                        # documentation
 # Live orchestrator output
 tmux attach -t loop
 
-# Full log (all tool output captured)
-tail -f $PBM_WORKSPACE/logs/loop.log
+# Session logs (per-session, not one giant file)
+ls -t $PBM_WORKSPACE/logs/loop_session_*.log | head -5
+tail -f $(ls -t $PBM_WORKSPACE/logs/loop_session_*.log | head -1)
 
-# Benchmark logs (archived per iteration)
-ls $PBM_WORKSPACE/logs/bench_v*_iter*.log
+# Benchmark logs
+ls $PBM_WORKSPACE/logs/bench_*.log
 
-# Raw Claude responses (for JSON parse debugging)
-ls $PBM_WORKSPACE/data/debug/
-
-# Dataset health
-python3 -m datagen.analyze_dataset
+# Snapshot diff (compare snapshot vs current data)
+python3 scripts/diff_snapshot.py
 
 # Orchestrator status
 python3 orchestrator.py status
