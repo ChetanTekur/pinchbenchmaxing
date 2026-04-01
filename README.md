@@ -8,25 +8,45 @@ Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch).
 
 ## How it works
 
-The orchestrator is a stateful Claude agent with 22 tools. Each turn it sees benchmark scores, dataset stats, and budget, then makes one decision: diagnose a failure, generate data, clean bad examples, train, benchmark, or stop.
+The orchestrator is a stateful Claude agent in a multi-turn conversation. Each turn it sees benchmark scores, dataset stats, and budget, then calls one of 22 tools. No hardcoded pipeline. It decides what to do based on what it sees.
 
 ```
-orchestrator.py          prompts/orchestrator.md        config.yaml
-      |                         |                           |
-      v                         v                           v
-  Claude Sonnet 4.6  <-- system prompt + state --> loop_state.json
-      |
-      v
-  one tool call per turn
-      |
-      +-- Data tools:     generate, score, filter, validate, snapshot, ...
-      +-- Analysis tools:  read_benchmark_transcript, diagnose
-      +-- Training tools:  train, convert, register, benchmark
+                        ┌─────────────────────┐
+                        │  Claude Sonnet 4.6  │
+                        │                     │
+                        │  Sees: scores,      │
+                        │  data stats, budget, │
+                        │  action history     │
+                        └────────┬────────────┘
+                                 │
+                            one tool call
+                                 │
+        ┌────────────────────────┼────────────────────────┐
+        │                        │                        │
+   ┌────▼─────┐           ┌──────▼──────┐          ┌─────▼──────┐
+   │ Analyze  │           │  Fix Data   │          │   Train    │
+   │          │           │             │          │            │
+   │ read     │           │ generate    │          │ train      │
+   │ transcript│──diag──▶│ validate    │──ready──▶│ convert    │
+   │ diagnose │  flows   │ score       │  to      │ register   │
+   │          │  into    │ filter      │  train   │ benchmark  │──▶ repeat
+   └──────────┘  gen     │ snapshot    │          └────────────┘
+                         └─────────────┘
 ```
 
-No hardcoded pipeline order. The orchestrator decides what to do based on what it sees.
+The orchestrator manages the full loop autonomously. It reads benchmark transcripts to understand *why* tasks fail, generates targeted data to fix them, validates the data before training, and benchmarks the result. If a regression happens, it restores gold data and tries a different approach.
 
-**Key behaviors are defined in markdown** (`prompts/orchestrator.md`), not Python. To change how the orchestrator thinks, edit the markdown and restart.
+**Behavior is defined in markdown** (`prompts/orchestrator.md`), not Python. To change how it thinks, edit the prompt and restart.
+
+### Guardrails
+
+The orchestrator has hard gates to prevent the failure modes we hit during development:
+
+- **Diagnosis gate** -- generation is blocked until the orchestrator reads benchmark transcripts or runs diagnosis. This prevents blind data generation, which caused the v19-v22 regression cycle.
+- **Gold integrity gate** -- training is blocked if working tasks (>=30% score) lost significant data vs the best-ever version. Failing tasks (<30%) are exempt because removing bad data is expected.
+- **Data quality gate** -- training requires >=90% clean examples. Examples with missing required tools are auto-removed.
+- **Self-healing generation** -- if output is truncated, the system reduces examples-per-call and increases the token budget automatically. Bulk generation inherits whatever parameters the pilot learned.
+- **Auto disk cleanup** -- training auto-removes old Ollama models (~5.6GB each) when disk is low.
 
 ## Quick start
 
@@ -89,13 +109,19 @@ The orchestrator adapts. If data is imbalanced, it rebalances first. If a task r
 
 **Data, not code.** The orchestrator modifies training data, not training code. Autoresearch modifies `train.py`. We modify `train.jsonl`. The training pipeline (LoRA, GGUF conversion, Ollama registration) is fixed. What changes is what the model sees during training.
 
-**Pilot before bulk.** Every generation run starts with 3 pilot examples, validated by Claude against the ground truth task definition. If the pilot is bad, the prompt is refined and retried. Only after the pilot passes does bulk generation proceed. This caught wrong filenames, missing tools, and truncation before they entered the dataset.
+**Diagnosis drives generation.** Early versions generated data blindly -- "task_21 scores 20%, generate more examples." This made things worse because the existing data taught wrong behavior (wrong tool names, missing required steps). Adding more bad data on top of bad data destroyed capabilities across v19-v22.
 
-**Self-healing generation.** No hardcoded list of "hard tasks." Every task starts with the same defaults (3 examples per call, 8192 tokens). If output is truncated, the system reduces to 1 example per call and increases the token budget. Bulk generation inherits whatever the pilot learned.
+Now diagnosis is mandatory. The orchestrator reads the raw benchmark transcript to see exactly what the model did wrong, then the `diagnose` tool saves per-task root causes to a JSON file. The `generate_data` tool auto-reads this and injects it into the generation prompt: "Root cause: model uses run_python instead of read_file. Generate examples that use read_file." The generated examples specifically avoid the diagnosed failure patterns.
 
-**Diagnosis flows into generation.** The `diagnose` tool saves root causes per task. The `generate_data` tool auto-reads them and injects them into the generation prompt. The generated examples specifically avoid the diagnosed failure patterns.
+**Pilot-validate-refine.** Getting data generation right was the hardest part. The first approach (batch-generate hundreds of examples, hope they're good) produced data with wrong filenames, missing tools, and truncated responses that silently poisoned the model. We added a three-step loop:
 
-**Gold data protection.** Training data is versioned on HuggingFace. On regression, the orchestrator can selectively restore specific tasks from the best-ever version while keeping improvements on other tasks. Tasks scoring <30% are exempt from the protection gate -- removing bad data from failing tasks is expected.
+1. Generate 3 pilot examples via the direct API
+2. Claude validates them against the actual benchmark task definition (semantic check)
+3. If bad: feed the issues back into the prompt, retry up to 3 times. If good: bulk generate the rest.
+
+This catches problems before they enter the dataset. The pilot also self-heals: if output is truncated, it reduces examples-per-call from 3 to 1 and increases the token budget. Bulk generation inherits whatever parameters the pilot settled on, so it doesn't re-discover the same truncation issues.
+
+**Gold data protection.** Training data is versioned on HuggingFace. On regression, the orchestrator selectively restores specific tasks from the best-ever version while keeping improvements on other tasks. This prevents the "scorched earth" failure mode where reverting one regression throws away gains on five other tasks.
 
 ## API keys
 
