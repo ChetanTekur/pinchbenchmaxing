@@ -254,7 +254,33 @@ def train(args: dict, cfg, state) -> dict:
                         ),
                     }
 
-        # Snapshot data distribution to log — permanent record of what each version trained on
+        # HARD GATE 4: prevent retraining on unchanged data
+        # If data matches a previous version's snapshot exactly, training is pointless
+        if state.best_version > 0:
+            from collections import Counter as _CheckSnap
+            current_counts = _CheckSnap()
+            if cfg.train_file.exists():
+                for _line in cfg.train_file.read_text().splitlines():
+                    if _line.strip():
+                        try:
+                            current_counts[json.loads(_line).get("task_id", "")] += 1
+                        except json.JSONDecodeError:
+                            pass
+            best_snap_file = cfg.data_dir / f"data_snapshot_v{state.best_version}.json"
+            if best_snap_file.exists():
+                best_snap = json.loads(best_snap_file.read_text())
+                best_counts = best_snap.get("per_task", {})
+                if dict(current_counts) == {k: v for k, v in best_counts.items() if v > 0}:
+                    return {
+                        "status": "error",
+                        "error": (
+                            f"BLOCKED: Data is identical to v{state.best_version} which scored "
+                            f"{state.best_avg_score:.1%}. Retraining on the same data is wasteful. "
+                            f"Generate new data or fix existing data first, then train."
+                        ),
+                    }
+
+        # Snapshot data distribution to log -- permanent record of what each version trained on
         from collections import Counter as _Counter
         _snap = _Counter()
         if cfg.train_file.exists():

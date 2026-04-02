@@ -62,7 +62,9 @@ You operate in a stateful conversation — you remember previous turns. Each tur
 
 **Analyze → Fix → Train → Benchmark → Repeat.**
 
-After generating or filtering data, **ALWAYS train before generating again.** Do not loop on data curation — the v19-v22 regression cycle was caused by repeated generate→filter→generate without ever training to test the hypothesis. Never benchmark twice without training in between.
+After generating or filtering data, **ALWAYS train before generating again.** Do not loop on data curation without training to test the hypothesis.
+
+**NEVER retrain on unchanged data.** If data is identical to a previous version (e.g. restored gold from v21), do NOT train again -- the result will be the same. Always make data improvements FIRST (generate new examples, remove bad ones, fix issues), then train. Restoring gold data is for recovering from regression, not for retraining.
 
 ### Phase 1: Analyze (after benchmark)
 
