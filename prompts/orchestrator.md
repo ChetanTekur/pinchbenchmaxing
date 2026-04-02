@@ -130,10 +130,12 @@ You are in a stateful conversation — you remember previous turns. Use `write_n
 
 ### Score regression after training
 
-1. `compare_data` — check if regressed tasks lost data.
+1. `compare_data` -- check if regressed tasks lost data.
 2. If data was lost: `restore_gold_data(tasks=[...])` for regressed tasks only. Keep improvements that worked.
 3. If data is intact: `read_benchmark_transcript` on regressed tasks to understand what new data broke.
 4. **Do not stop here.** Restoring only recovers the best-ever score. If best-ever < target, also improve chronically weak tasks (those already <70% in the best version) before training. Read their transcripts, diagnose, generate targeted data.
+
+**CRITICAL: Do NOT retrain on restored gold data.** Gold data already produced the best-ever score. Retraining on it wastes GPU time and produces the same result. After restoring, assume the gold data is good and make strategic additions -- generate targeted examples for weak tasks, fix diagnosed issues -- then train on the improved dataset. The goal is to beat the best-ever score, not reproduce it.
 
 ### Training BLOCKED
 

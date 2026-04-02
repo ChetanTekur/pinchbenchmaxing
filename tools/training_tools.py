@@ -254,28 +254,6 @@ def train(args: dict, cfg, state) -> dict:
                         ),
                     }
 
-        # HARD GATE 4: prevent retraining on unchanged data
-        # Hash train.jsonl and check against all previous versions
-        import hashlib
-        if cfg.train_file.exists():
-            data_hash = hashlib.sha256(cfg.train_file.read_bytes()).hexdigest()[:16]
-            # Check all previous snapshots for a matching hash
-            for snap_file in sorted(cfg.data_dir.glob("data_snapshot_v*.json")):
-                try:
-                    snap = json.loads(snap_file.read_text())
-                    if snap.get("data_hash") == data_hash:
-                        prev_v = snap.get("version", "?")
-                        return {
-                            "status": "error",
-                            "error": (
-                                f"BLOCKED: train.jsonl is identical to v{prev_v} "
-                                f"(hash {data_hash}). Retraining on the same data "
-                                f"produces the same model. Change the data first."
-                            ),
-                        }
-                except (json.JSONDecodeError, KeyError):
-                    continue
-
         # Snapshot data distribution to log -- permanent record of what each version trained on
         from collections import Counter as _Counter
         _snap = _Counter()
@@ -300,13 +278,12 @@ def train(args: dict, cfg, state) -> dict:
                        "dedup_data", "rebalance_data", "validate_data"):
                 changelog.append(f"{act}: {summary}")
 
-        # Save snapshot + changelog + data hash for cross-version comparison
+        # Save snapshot + changelog for cross-version comparison
         snap_file = cfg.data_dir / f"data_snapshot_v{version}.json"
         snap_file.write_text(json.dumps({
             "version": version,
             "total": sum(_snap.values()),
             "per_task": dict(_snap),
-            "data_hash": data_hash if cfg.train_file.exists() else None,
             "changelog": changelog,
         }, indent=2))
         log_print(f"  [train]   Saved: {snap_file}")
