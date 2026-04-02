@@ -255,30 +255,26 @@ def train(args: dict, cfg, state) -> dict:
                     }
 
         # HARD GATE 4: prevent retraining on unchanged data
-        # If data matches a previous version's snapshot exactly, training is pointless
-        if state.best_version > 0:
-            from collections import Counter as _CheckSnap
-            current_counts = _CheckSnap()
-            if cfg.train_file.exists():
-                for _line in cfg.train_file.read_text().splitlines():
-                    if _line.strip():
-                        try:
-                            current_counts[json.loads(_line).get("task_id", "")] += 1
-                        except json.JSONDecodeError:
-                            pass
-            best_snap_file = cfg.data_dir / f"data_snapshot_v{state.best_version}.json"
-            if best_snap_file.exists():
-                best_snap = json.loads(best_snap_file.read_text())
-                best_counts = best_snap.get("per_task", {})
-                if dict(current_counts) == {k: v for k, v in best_counts.items() if v > 0}:
-                    return {
-                        "status": "error",
-                        "error": (
-                            f"BLOCKED: Data is identical to v{state.best_version} which scored "
-                            f"{state.best_avg_score:.1%}. Retraining on the same data is wasteful. "
-                            f"Generate new data or fix existing data first, then train."
-                        ),
-                    }
+        # Hash train.jsonl and check against all previous versions
+        import hashlib
+        if cfg.train_file.exists():
+            data_hash = hashlib.sha256(cfg.train_file.read_bytes()).hexdigest()[:16]
+            # Check all previous snapshots for a matching hash
+            for snap_file in sorted(cfg.data_dir.glob("data_snapshot_v*.json")):
+                try:
+                    snap = json.loads(snap_file.read_text())
+                    if snap.get("data_hash") == data_hash:
+                        prev_v = snap.get("version", "?")
+                        return {
+                            "status": "error",
+                            "error": (
+                                f"BLOCKED: train.jsonl is identical to v{prev_v} "
+                                f"(hash {data_hash}). Retraining on the same data "
+                                f"produces the same model. Change the data first."
+                            ),
+                        }
+                except (json.JSONDecodeError, KeyError):
+                    continue
 
         # Snapshot data distribution to log -- permanent record of what each version trained on
         from collections import Counter as _Counter
@@ -304,12 +300,13 @@ def train(args: dict, cfg, state) -> dict:
                        "dedup_data", "rebalance_data", "validate_data"):
                 changelog.append(f"{act}: {summary}")
 
-        # Save snapshot + changelog for cross-version comparison
+        # Save snapshot + changelog + data hash for cross-version comparison
         snap_file = cfg.data_dir / f"data_snapshot_v{version}.json"
         snap_file.write_text(json.dumps({
             "version": version,
             "total": sum(_snap.values()),
             "per_task": dict(_snap),
+            "data_hash": data_hash if cfg.train_file.exists() else None,
             "changelog": changelog,
         }, indent=2))
         log_print(f"  [train]   Saved: {snap_file}")
