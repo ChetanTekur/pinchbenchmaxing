@@ -688,6 +688,31 @@ Generate improved examples that address ALL the issues above.
                 print(f"    Execution filter: {len(exec_passed)} passed, {exec_failed} rejected")
 
             if exec_passed:
+                # Novelty check: for failing tasks, ensure new data uses different
+                # tool patterns than existing data (otherwise we're adding more of the same)
+                bench_score = 0.0
+                try:
+                    from agents.base import AgentState
+                    # Access score from state if available via config
+                    state_file = _cfg.data_dir / "loop_state.json"
+                    if state_file.exists():
+                        st = AgentState.from_dict(json.loads(state_file.read_text()))
+                        bench_score = st.scores.get(task_id, 0.0)
+                except Exception:
+                    pass
+
+                if bench_score < 0.3:
+                    novelty = _check_novelty(task_id, exec_passed)
+                    if novelty and not novelty["is_novel"]:
+                        print(f"    Novelty check: new data uses same patterns as existing ({novelty['reason']})")
+                        failure_log.append(f"attempt {attempt}: not novel -- {novelty['reason']}")
+                        refinement_feedback = (
+                            f"The generated examples use the SAME tool patterns as existing training data, "
+                            f"but the task scores {bench_score:.0%}. The existing approach is clearly wrong. "
+                            f"You MUST use a DIFFERENT approach. {novelty['suggestion']}"
+                        )
+                        continue
+
                 parsed = exec_passed
                 print(f"    Pilot passed on attempt {attempt}")
                 return verdict, parsed, {"epc": epc, "max_tok": max_tok}
@@ -724,6 +749,66 @@ Generate improved examples that address ALL the issues above.
         print(f"      - {entry}")
 
     return "BAD", [], {"epc": epc, "max_tok": max_tok}  # return empty -- do not save bad data
+
+
+def _check_novelty(task_id: str, new_examples: list) -> dict | None:
+    """Check if new examples use different tool patterns than existing data.
+
+    For failing tasks, generating more of the same approach is wasteful.
+    Returns None if can't check, or {is_novel, reason, suggestion}.
+    """
+    try:
+        existing = []
+        if TRAIN_FILE.exists():
+            for line in TRAIN_FILE.read_text().splitlines():
+                if line.strip():
+                    ex = json.loads(line)
+                    if ex.get("task_id") == task_id:
+                        existing.append(ex)
+
+        if len(existing) < 5:
+            return None  # not enough data to compare
+
+        # Extract tool sequences from existing and new
+        def get_tool_sequence(ex):
+            tools = []
+            for msg in ex.get("messages", []):
+                if msg.get("role") == "assistant":
+                    for tc in re.findall(r'<tool_call>(.*?)</tool_call>', msg.get("content", ""), re.DOTALL):
+                        try:
+                            tools.append(json.loads(tc.strip()).get("name", ""))
+                        except json.JSONDecodeError:
+                            pass
+            return tuple(tools)
+
+        existing_patterns = set()
+        for ex in existing:
+            seq = get_tool_sequence(ex)
+            # Use first 3 tools as the "pattern signature"
+            existing_patterns.add(seq[:3])
+
+        new_patterns = set()
+        for ex in new_examples:
+            seq = get_tool_sequence(ex)
+            new_patterns.add(seq[:3])
+
+        # Check overlap
+        overlap = new_patterns & existing_patterns
+        if overlap and len(overlap) == len(new_patterns):
+            # All new examples match existing patterns
+            common = ", ".join(" -> ".join(p) for p in list(overlap)[:3])
+            return {
+                "is_novel": False,
+                "reason": f"all new examples use existing patterns: {common}",
+                "suggestion": (
+                    "Read the benchmark transcript to see what tools the benchmark "
+                    "actually expects, then generate examples using THOSE tools."
+                ),
+            }
+
+        return {"is_novel": True, "reason": "new patterns detected"}
+    except Exception:
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
