@@ -14,6 +14,7 @@ Usage:
 """
 
 import json
+import os
 import sys
 import re
 from pathlib import Path
@@ -80,7 +81,7 @@ def categorize_failure(task):
 def main():
     if len(sys.argv) < 2:
         # Find most recent benchmark log
-        log_dir = Path("/workspace/synthbench/logs")
+        log_dir = Path(os.environ.get("PBM_WORKSPACE", "/workspace/synthbench")) / "logs"
         logs = sorted(log_dir.glob("bench_ollama_qwen35-9b-clawd-v*.log"),
                       key=lambda p: p.stat().st_mtime, reverse=True)
         if not logs:

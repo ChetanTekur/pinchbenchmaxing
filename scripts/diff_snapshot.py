@@ -6,13 +6,15 @@ Usage:
   python scripts/diff_snapshot.py /path/to/snapshot/train.jsonl
 """
 import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
 
 # Default: find the most recent snapshot
-SNAP_DIR = Path("/workspace/synthbench/data/snapshots")
-TRAIN = Path("/workspace/synthbench/data/train.jsonl")
+WS = os.environ.get("PBM_WORKSPACE", "/workspace/synthbench")
+SNAP_DIR = Path(WS) / "data" / "snapshots"
+TRAIN = Path(WS) / "data" / "train.jsonl"
 
 
 def count_tasks(path):
