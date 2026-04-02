@@ -349,6 +349,34 @@ def build_turn_context(state: AgentState, cfg) -> str:
                 directive_text = f"\n## HUMAN DIRECTIVE (highest priority — follow this)\n{note['note']}\n"
                 break
 
+    # Cross-version trends for consistently weak tasks
+    trends_text = ""
+    if len(state.model_history) >= 2:
+        # Collect per-task scores across versions
+        all_tasks = set()
+        for h in state.model_history:
+            all_tasks.update(h.get("scores", {}).keys())
+
+        consistent_weak = []
+        for task_id in sorted(all_tasks):
+            task_scores = []
+            for h in state.model_history[-5:]:  # last 5 versions
+                s = h.get("scores", {}).get(task_id)
+                if s is not None:
+                    task_scores.append((h["version"], s))
+            if len(task_scores) >= 2:
+                avg = sum(s for _, s in task_scores) / len(task_scores)
+                if avg < 0.5:
+                    history_str = ", ".join(f"v{v}={s:.0%}" for v, s in task_scores)
+                    consistent_weak.append(f"  {task_id}: avg={avg:.0%} [{history_str}]")
+
+        if consistent_weak:
+            trends_text = (
+                "\n## Consistently Weak Tasks (avg <50% across versions)\n"
+                + "\n".join(consistent_weak)
+                + "\nThese tasks need targeted data fixes, not just more examples.\n"
+            )
+
     return f"""{directive_text}## Current State
 
 Model: v{state.model_version} ({state.current_ollama_model or 'none'})
@@ -363,6 +391,7 @@ Budget remaining: ${budget_remaining:.2f}
 
 ## Scores
 {scores_summary or '(no scores yet)'}
+{trends_text}
 
 ## Scratchpad (your notes from earlier turns)
 {scratchpad_text or '(empty — use write_note to save reminders)'}

@@ -245,18 +245,23 @@ def _decide(signals: TaskSignals) -> tuple[Recommendation, str]:
             f"Benchmark {bench:.0%} >= {BENCH_HIGH:.0%} threshold. Task is passing."
         )
 
-    # 3. Benchmark ZERO with lots of good data — likely infrastructure
+    # 3. Benchmark ZERO with lots of good data
+    # Only mark as INFRASTRUCTURE for tasks that truly can't work without
+    # external services (web search, image gen). Tasks that need Python
+    # libraries (pandas, pdfplumber) are data problems, not infra problems.
+    TRULY_INFRA = {"task_02_stock", "task_04_weather", "task_06_events",
+                   "task_13_image_gen", "task_18_market_research"}
     if bench == 0.0 and count >= COUNT_HIGH and judge >= JUDGE_HIGH:
-        if signals.task_id in INFRA_DEPENDENT_TASKS:
+        if signals.task_id in TRULY_INFRA:
             return (
                 Recommendation.INFRASTRUCTURE,
                 f"Scores 0% with {count} examples (judge avg {judge:.1f}). "
-                f"This task requires external tools — likely an infrastructure issue."
+                f"This task requires external services -- likely an infrastructure issue."
             )
         return (
-            Recommendation.ADVERSARIAL,
-            f"Scores 0% with {count} good examples (judge {judge:.1f}). "
-            f"Data looks fine — try adversarial examples targeting failure modes."
+            Recommendation.REGENERATE,
+            f"Scores 0% with {count} examples (judge {judge:.1f}). "
+            f"Data may teach wrong approach. Regenerate with diagnosis context."
         )
 
     # 4. Benchmark LOW + judge LOW → data quality problem
