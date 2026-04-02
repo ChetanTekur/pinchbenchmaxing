@@ -66,17 +66,7 @@ COUNT_LOW     = 30      # too few examples to learn the task
 COUNT_BLOAT   = 100     # so many examples it may cause forgetting of other tasks
 MAX_ADD_PER_CYCLE = 20  # max new examples per task per improvement cycle
 
-# Tasks that depend on infrastructure (image gen, web search, PDF tools, etc.)
-# If these score 0% with plenty of good data, it's probably a setup issue.
-INFRA_DEPENDENT_TASKS = {
-    "task_02_stock",               # web_search
-    "task_04_weather",             # web_search
-    "task_06_events",              # web_search
-    "task_13_image_gen",           # generate_image
-    "task_18_market_research",     # web_search
-    "task_19_spreadsheet_summary", # openpyxl / pandas
-    "task_20_eli5_pdf",            # pdfplumber / PyPDF2
-}
+
 
 
 # ── Data structures ──────────────────────────────────────────────────────────
