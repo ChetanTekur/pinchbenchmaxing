@@ -464,7 +464,24 @@ def cmd_collect():
                 parsed["source"] = f"dynamic_{datetime.now().strftime('%Y%m%d')}"
                 new_by_task[task_id].append(parsed)
 
-    # Append to train/val (append mode — does not rewrite existing data)
+    # Execution filter: run traces for real, reject broken ones
+    from datagen.trace_executor import execute_trace, passes_quality_filter, _find_task_fixtures
+    exec_rejected = 0
+    for task_id in list(new_by_task.keys()):
+        fixtures = _find_task_fixtures(task_id)
+        approved = []
+        for ex in new_by_task[task_id]:
+            exec_result = execute_trace(ex, task_id, fixtures_dir=fixtures)
+            if passes_quality_filter(exec_result):
+                approved.append(exec_result["example"])
+            else:
+                exec_rejected += 1
+        new_by_task[task_id] = approved
+
+    if exec_rejected > 0:
+        print(f"  Execution filter: rejected {exec_rejected} examples")
+
+    # Append to train/val (append mode -- does not rewrite existing data)
     total_train = 0
     total_val = 0
     per_task_report = {}
@@ -650,8 +667,40 @@ Generate improved examples that address ALL the issues above.
             print(f"    Reasoning: {reasoning[:200]}")
 
         if verdict == "GOOD":
-            print(f"    Pilot passed on attempt {attempt}")
-            return verdict, parsed, {"epc": epc, "max_tok": max_tok}
+            # Execute traces for real before accepting
+            from datagen.trace_executor import execute_trace, passes_quality_filter, _find_task_fixtures
+            fixtures = _find_task_fixtures(task_id)
+            exec_passed = []
+            exec_failed = 0
+            for ex in parsed:
+                exec_result = execute_trace(ex, task_id, fixtures_dir=fixtures)
+                if passes_quality_filter(exec_result):
+                    exec_passed.append(exec_result["example"])
+                else:
+                    exec_failed += 1
+                    failed_tools = [e for e in exec_result["execution_log"]
+                                    if e.get("status") == "error"]
+                    if failed_tools:
+                        tool_names = [e["tool"] for e in failed_tools]
+                        print(f"      Execution rejected: {', '.join(tool_names)} failed")
+
+            if exec_failed > 0:
+                print(f"    Execution filter: {len(exec_passed)} passed, {exec_failed} rejected")
+
+            if exec_passed:
+                parsed = exec_passed
+                print(f"    Pilot passed on attempt {attempt}")
+                return verdict, parsed, {"epc": epc, "max_tok": max_tok}
+
+            # All examples failed execution -- retry with feedback
+            failure_log.append(f"attempt {attempt}: semantic GOOD but execution failed")
+            refinement_feedback = (
+                "Examples passed semantic validation but failed real execution. "
+                "Ensure Python code is syntactically correct and runs without errors. "
+                "Ensure write_file produces non-empty content. "
+                "Ensure the trace completes with a final assistant message."
+            )
+            continue
 
         # Build refinement feedback for next attempt
         failure_log.append(f"attempt {attempt}: {verdict} -- {'; '.join(issues[:3])}")
