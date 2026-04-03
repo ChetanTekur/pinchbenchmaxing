@@ -27,23 +27,12 @@ def load_pinchbench_tasks():
         print(f"ERROR: PinchBench tasks not found at {SKILL_DIR}")
         return tasks
 
-    for task_dir in sorted(SKILL_DIR.iterdir()):
-        if not task_dir.is_dir():
-            continue
-        # Look for the task definition .md file
-        md_files = list(task_dir.glob("*.md"))
-        if not md_files:
-            continue
+    for md_file in sorted(SKILL_DIR.glob("task_*.md")):
+        task_id = md_file.stem  # e.g. "task_11_clawdhub"
+        content = md_file.read_text(errors="replace")
 
-        task_id = task_dir.name
-        # Normalize to our format: "01_calendar" -> "task_01_calendar"
-        if not task_id.startswith("task_"):
-            task_id = f"task_{task_id}"
-
-        # Read task name from frontmatter or first heading
-        content = md_files[0].read_text(errors="replace")
-        name = task_dir.name
-        # Try frontmatter
+        # Extract name from frontmatter or first heading
+        name = task_id
         if content.startswith("---"):
             end = content.find("---", 3)
             if end != -1:
@@ -52,16 +41,14 @@ def load_pinchbench_tasks():
                     if line.strip().startswith("name:"):
                         name = line.split(":", 1)[1].strip().strip("'\"")
                         break
-        # Try first heading
-        if name == task_dir.name:
+        if name == task_id:
             m = re.search(r'^#\s+(.+)', content, re.MULTILINE)
             if m:
                 name = m.group(1).strip()
 
         tasks[task_id] = {
             "name": name,
-            "dir": str(task_dir),
-            "md_file": str(md_files[0]),
+            "md_file": str(md_file),
             "content_preview": content[:200],
         }
 
