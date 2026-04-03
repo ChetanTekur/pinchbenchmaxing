@@ -21,7 +21,8 @@ mkdir -p "$LOG_DIR"
 MODELS=("qwen35-9b-clawd-v21" "qwen35-9b-clawd-v23" "qwen35-9b-clawd-v29")
 RUNS_PER_MODEL=2
 
-# Check which models are available
+# Check and register models
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo "=== Variance Test ==="
 echo "  Models: ${MODELS[*]}"
 echo "  Runs per model: $RUNS_PER_MODEL"
@@ -31,7 +32,19 @@ for m in "${MODELS[@]}"; do
     if ollama list 2>/dev/null | grep -q "^${m}"; then
         echo "  [OK] $m"
     else
-        echo "  [MISSING] $m -- will skip"
+        echo "  [MISSING] $m -- registering..."
+        # Extract version number (e.g. qwen35-9b-clawd-v23 -> 23)
+        ver=$(echo "$m" | grep -oP 'v\K\d+$')
+        if [ -n "$ver" ]; then
+            bash "$SCRIPT_DIR/register_model.sh" "v${ver}" "$m" 2>&1 | tail -3
+            if ollama list 2>/dev/null | grep -q "^${m}"; then
+                echo "  [OK] $m registered"
+            else
+                echo "  [FAIL] $m could not be registered"
+            fi
+        else
+            echo "  [FAIL] could not parse version from $m"
+        fi
     fi
 done
 echo ""
